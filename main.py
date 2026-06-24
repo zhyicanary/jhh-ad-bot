@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""wechat-ad-bot - 微信小程序广告自动化
+"""jhh-ad-bot - 简幻欢看广告积分助手
+
+为简幻欢小程序自动观看广告获取积分。
 
 用法:
     python main.py                    # 默认配置启动
@@ -21,7 +23,7 @@ def load_config(path: str) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="微信小程序广告自动化")
+    parser = argparse.ArgumentParser(description="简幻欢看广告积分助手")
     parser.add_argument("-c", "--config", default="config.yaml", help="配置文件路径")
     parser.add_argument("--once", action="store_true", help="只执行一轮")
     parser.add_argument("-v", "--verbose", action="store_true", help="详细日志")
