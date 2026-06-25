@@ -71,4 +71,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        if os.name == "nt":
+            input("\n程序出错，按 Enter 退出...")
+        sys.exit(1)
