@@ -50,6 +50,9 @@ class AdBotEngine:
         self.stats = Stats()
         self._watch_start: float = 0.0
         self._stop_requested = False
+        win_cfg = config.get("window", {})
+        self._win_keyword = win_cfg.get("title_keyword", "微信")
+        self._auto_focus = win_cfg.get("auto_focus", True)
 
     def run(self) -> Stats:
         """启动主循环（阻塞运行）。"""
@@ -57,12 +60,8 @@ class AdBotEngine:
         self.stats.start_time = time.time()
 
         # 激活微信窗口
-        win_cfg = self.config.get("window", {})
-        if win_cfg.get("auto_focus", True):
-            keyword = win_cfg.get("title_keyword", "微信")
-            ok = focus_window(keyword)
-            logger.info(f"激活窗口 '{keyword}': {'成功' if ok else '失败（请手动激活）'}")
-            action_wait(1.0)
+        self._ensure_focus()
+        action_wait(1.0)
 
         loop_cfg = self.config.get("loop", {})
         max_rounds = loop_cfg.get("max_rounds", 0)
@@ -87,6 +86,14 @@ class AdBotEngine:
     def stop(self) -> None:
         """请求停止（从外部调用，下次循环生效）。"""
         self._stop_requested = True
+
+    def _ensure_focus(self) -> None:
+        """确保微信窗口在前台。"""
+        if self._auto_focus:
+            ok = focus_window(self._win_keyword)
+            if ok:
+                logger.debug(f"已激活窗口 '{self._win_keyword}'")
+                action_wait(0.3)
 
     def _tick(self) -> None:
         """执行一次状态机步骤。"""
@@ -124,6 +131,7 @@ class AdBotEngine:
         if result is not None:
             x, y, conf = result
             logger.info(f"  找到广告按钮 ({x}, {y}) 置信度: {conf:.2%}")
+            self._ensure_focus()
             click(x, y)
             action_wait(timing.get("post_click_delay", 1.5))
             self.state = State.WATCHING
@@ -163,6 +171,7 @@ class AdBotEngine:
         if result is not None:
             x, y, conf = result
             logger.info(f"  找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
+            self._ensure_focus()
             click(x, y)
             action_wait(timing.get("post_click_delay", 1.5))
             self.state = State.CHECK_AD
