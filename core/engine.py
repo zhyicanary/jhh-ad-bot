@@ -151,7 +151,8 @@ class AdBotEngine:
         """寻找并点击关闭按钮。"""
         logger.info("  正在寻找关闭按钮...")
         screen = screenshot()
-        threshold = match_cfg.get("confidence_threshold", 0.75)
+        # 关闭按钮用更低的阈值，因为广告关闭按钮常变化
+        threshold = match_cfg.get("close_confidence", 0.6)
 
         result = match_template(
             screen,

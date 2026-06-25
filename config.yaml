@@ -13,6 +13,7 @@ timing:
 # ===== 识别参数 =====
 matching:
     confidence_threshold: 0.75 # 模板匹配置信度阈值(0-1)
+    close_confidence: 0.6 # 关闭按钮单独阈值(更低,因为广告关闭按钮外观多变)
     scale_steps: 5 # 多尺度匹配的缩放步数
     scale_range: [0.8, 1.2] # 缩放范围
 
