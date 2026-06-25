@@ -11,10 +11,23 @@
 
 import argparse
 import logging
+import os
 import sys
+
 import yaml
 
 from core.engine import AdBotEngine
+
+
+def resource_path(relative_path: str) -> str:
+    """获取打包后资源文件的真实路径。
+
+    PyInstaller 打包后文件解压在 sys._MEIPASS 临时目录，
+    直接使用相对路径会找不到文件，需通过此函数转换。
+    """
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
 def load_config(path: str) -> dict:
@@ -37,8 +50,14 @@ def main():
         datefmt="%H:%M:%S",
     )
 
-    # 加载配置
-    config = load_config(args.config)
+    # 加载配置（支持 PyInstaller 打包路径）
+    config_path = resource_path(args.config)
+    config = load_config(config_path)
+
+    # 将所有模板路径解析为绝对路径（支持 PyInstaller 打包路径）
+    for key, path in config.get("templates", {}).items():
+        config["templates"][key] = resource_path(path)
+
     if args.once:
         config.setdefault("loop", {})["max_rounds"] = 1
 

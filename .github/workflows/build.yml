@@ -28,7 +28,12 @@ jobs:
 
       - name: 打包 exe
         run: |
-          pyinstaller --onefile --name jhh-ad-bot --console main.py
+          pyinstaller --onefile --name jhh-ad-bot --console ^
+            --add-data "config.yaml;." ^
+            --add-data "templates;templates" ^
+            --collect-all cv2 ^
+            --hidden-import pygetwindow ^
+            main.py
 
       - name: 上传到 Release
         uses: softprops/action-gh-release@v2
