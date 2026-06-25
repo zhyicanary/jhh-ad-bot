@@ -27,6 +27,7 @@ jobs:
           pip install pyinstaller
 
       - name: 打包 exe
+        shell: cmd
         run: |
           pyinstaller --onefile --name jhh-ad-bot --console ^
             --add-data "config.yaml;." ^
