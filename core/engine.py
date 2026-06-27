@@ -173,7 +173,9 @@ class AdBotEngine:
             logger.info(f"  找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
             self._ensure_focus()
             click(x, y)
-            action_wait(timing.get("post_click_delay", 1.5))
+            # 关闭广告后需要更长等待让小程序恢复，避免立即进入CHECK_AD却找不到广告按钮
+            close_delay = timing.get("post_close_delay", 4)
+            action_wait(close_delay)
             self.state = State.CHECK_AD
         else:
             logger.info("  未找到关闭按钮，重试中...")

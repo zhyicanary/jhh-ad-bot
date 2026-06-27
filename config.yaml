@@ -1,28 +1,29 @@
 # ===== 模板图片路径 =====
 templates:
-    ad_button: "templates/ad_button.png" # "看广告"按钮截图
-    close_button: "templates/close_button.png" # 广告关闭按钮截图
+  ad_button: "templates/ad_button.png" # "看广告"按钮截图
+  close_button: "templates/close_button.png" # 广告关闭按钮截图
 
 # ===== 时间控制 =====
 timing:
-    ad_watch_seconds: 30 # 每次看广告时长
-    check_interval: 2 # 两次检测间隔(秒)
-    post_click_delay: 1.5 # 点击后等待渲染(秒)
-    close_retry_interval: 3 # 关闭按钮重试间隔(秒)
+  ad_watch_seconds: 30 # 每次看广告时长
+  check_interval: 2 # 两次检测间隔(秒)
+  post_click_delay: 1.5 # 点击后等待渲染(秒)
+  post_close_delay: 4 # 关闭广告后等待小程序恢复(秒),比post_click_delay长
+  close_retry_interval: 3 # 关闭按钮重试间隔(秒)
 
 # ===== 识别参数 =====
 matching:
-    confidence_threshold: 0.75 # 模板匹配置信度阈值(0-1)
-    close_confidence: 0.6 # 关闭按钮单独阈值(更低,因为广告关闭按钮外观多变)
-    scale_steps: 5 # 多尺度匹配的缩放步数
-    scale_range: [0.8, 1.2] # 缩放范围
+  confidence_threshold: 0.75 # 模板匹配置信度阈值(0-1)
+  close_confidence: 0.6 # 关闭按钮单独阈值(更低,因为广告关闭按钮外观多变)
+  scale_steps: 5 # 多尺度匹配的缩放步数
+  scale_range: [0.8, 1.2] # 缩放范围
 
 # ===== 目标窗口 =====
 window:
-    title_keyword: "微信" # 微信窗口标题关键词（支持部分匹配）
-    auto_focus: true # 是否自动激活窗口
+  title_keyword: "微信" # 微信窗口标题关键词（支持部分匹配）
+  auto_focus: true # 是否自动激活窗口
 
 # ===== 循环控制 =====
 loop:
-    max_rounds: 0 # 最大循环次数，0=无限
-    stop_on_template: "" # 若识别到此模板则停止，留空不启用
+  max_rounds: 0 # 最大循环次数，0=无限
+  stop_on_template: "" # 若识别到此模板则停止，留空不启用
