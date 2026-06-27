@@ -10,9 +10,9 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from .capture import screenshot
-from .vision import match_template
-from .action import click, wait as action_wait, focus_window
+from core.capture import screenshot
+from core.vision import match_template
+from core.action import click, wait as action_wait, focus_window
 
 logger = logging.getLogger(__name__)
 

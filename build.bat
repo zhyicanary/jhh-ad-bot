@@ -27,7 +27,12 @@ pyinstaller --onefile ^
     --add-data "config.yaml;." ^
     --add-data "templates;templates" ^
     --collect-all cv2 ^
+    --collect-all pyautogui ^
     --hidden-import pygetwindow ^
+    --hidden-import core.action ^
+    --hidden-import core.capture ^
+    --hidden-import core.vision ^
+    --hidden-import core.engine ^
     main.py
 
 echo.
