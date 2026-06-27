@@ -10,6 +10,7 @@ timing:
   post_click_delay: 1.5 # 点击后等待渲染(秒)
   post_close_delay: 4 # 关闭广告后等待小程序恢复(秒),比post_click_delay长
   close_retry_interval: 3 # 关闭按钮重试间隔(秒)
+  close_timeout: 15 # 找关闭按钮的总超时(秒),超时后自动跳过,防止卡死
 
 # ===== 识别参数 =====
 matching:

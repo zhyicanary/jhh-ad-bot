@@ -2,7 +2,7 @@
 
 跨平台实现：pyautogui (键鼠) + 平台窗口工具。
 """
-
+··
 import time
 import subprocess
 import platform

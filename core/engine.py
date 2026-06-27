@@ -49,6 +49,7 @@ class AdBotEngine:
         self.state = State.CHECK_AD
         self.stats = Stats()
         self._watch_start: float = 0.0
+        self._close_start: float = 0.0
         self._stop_requested = False
         win_cfg = config.get("window", {})
         self._win_keyword = win_cfg.get("title_keyword", "微信")
@@ -150,6 +151,7 @@ class AdBotEngine:
         if remain <= 0:
             logger.info("  广告观看完毕，开始寻找关闭按钮...")
             self.state = State.CLOSE_AD
+            self._close_start = time.time()
             self.stats.ad_watched += 1
         else:
             logger.info(f"  观看中... 剩余 {remain:.0f}s")
@@ -157,6 +159,13 @@ class AdBotEngine:
 
     def _handle_close_ad(self, timing: dict, match_cfg: dict, templates: dict) -> None:
         """寻找并点击关闭按钮。"""
+        close_timeout = timing.get("close_timeout", 15)
+        if time.time() - self._close_start > close_timeout:
+            logger.warning(f"  超过 {close_timeout}s 未找到关闭按钮，跳过关闭步骤...")
+            action_wait(1)
+            self.state = State.CHECK_AD
+            return
+
         logger.info("  正在寻找关闭按钮...")
         screen = screenshot()
         # 关闭按钮用更低的阈值，因为广告关闭按钮常变化
