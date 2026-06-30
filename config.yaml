@@ -8,7 +8,7 @@ timing:
   ad_watch_seconds: 30 # 每次看广告时长
   check_interval: 2 # 两次检测间隔(秒)
   post_click_delay: 1.5 # 点击"看广告"后等待渲染(秒)
-  post_close_delay: 1.5 # 关闭广告后等待(秒)，避免立即进入下一轮
+  post_close_delay: 3 # 关闭广告后等待(秒)，避免立即进入下一轮而找不到按钮
   close_retry_interval: 3 # 关闭按钮重试间隔(秒)
 
 # ===== 识别参数 =====
