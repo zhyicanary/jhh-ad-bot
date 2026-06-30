@@ -28,8 +28,10 @@ pyinstaller --onefile ^
     --add-data "templates;templates" ^
     --collect-all cv2 ^
     --collect-all pyautogui ^
+    --collect-all yaml ^
     --hidden-import pygetwindow ^
     --hidden-import winocr ^
+    --hidden-import yaml ^
     --hidden-import core.action ^
     --hidden-import core.capture ^
     --hidden-import core.vision ^
