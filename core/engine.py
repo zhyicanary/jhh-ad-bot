@@ -4,30 +4,32 @@
   CHECK_AD -> WATCHING -> CLOSE_AD -> CHECK_AD ...
 """
 
-import time
 import logging
-from typing import Optional, Dict, Any
+import time
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Any, Dict, Optional
 
+from . import ocr
+from .action import click, focus_window
+from .action import wait as action_wait
 from .capture import screenshot
 from .vision import match_template
-from .action import click, wait as action_wait, focus_window
-from . import ocr
 
 logger = logging.getLogger(__name__)
 
 
 class State(Enum):
-    CHECK_AD = auto()    # 寻找"看广告"按钮
-    WATCHING = auto()    # 正在观看广告（等待倒计时）
-    CLOSE_AD = auto()    # 寻找关闭按钮
-    STOP = auto()        # 停止
+    CHECK_AD = auto()  # 寻找"看广告"按钮
+    WATCHING = auto()  # 正在观看广告（等待倒计时）
+    CLOSE_AD = auto()  # 寻找关闭按钮
+    STOP = auto()  # 停止
 
 
 @dataclass
 class Stats:
     """运行统计。"""
+
     rounds: int = 0
     ad_watched: int = 0
     ad_skipped: int = 0  # 没找到广告按钮的次数
@@ -166,7 +168,9 @@ class AdBotEngine:
 
         # ---- 方案一：OCR 文字识别找"关闭/×/跳过" ----
         if match_cfg.get("ocr_enabled", True):
-            ocr_keywords = match_cfg.get("ocr_close_keywords", ["关闭", "×", "跳过", "关闭广告"])
+            ocr_keywords = match_cfg.get(
+                "ocr_close_keywords", ["关闭", "×", "跳过", "关闭广告"]
+            )
             result = ocr.find_text(screen, ocr_keywords)
         else:
             result = None
@@ -176,7 +180,8 @@ class AdBotEngine:
             logger.info(f"  OCR 找到 '{text}' 按钮 ({x}, {y})")
             self._ensure_focus()
             click(x, y)
-            action_wait(timing.get("post_click_delay", 1.5))
+            # 等待关闭动画/弹窗消失，再进入下一轮
+            action_wait(timing.get("post_close_delay", 1.5))
             self.state = State.CHECK_AD
             return
 
@@ -193,7 +198,8 @@ class AdBotEngine:
             logger.info(f"  模板匹配找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
             self._ensure_focus()
             click(x, y)
-            action_wait(timing.get("post_click_delay", 1.5))
+            # 等待关闭动画/弹窗消失，再进入下一轮
+            action_wait(timing.get("post_close_delay", 1.5))
             self.state = State.CHECK_AD
         else:
             logger.info("  未找到关闭按钮，重试中...")
