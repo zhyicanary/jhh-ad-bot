@@ -76,18 +76,20 @@ def find_text(
     if result is None:
         return None
 
-    # 兼容 RapidOCR tuple 和 named tuple 两种返回格式
-    if isinstance(result, tuple):
+    # RapidOCR 返回 named tuple: boxes, txts, scores, ...
+    # 优先用 attribute 访问，更可靠
+    try:
+        boxes = result.boxes
+        txts = result.txts
+    except AttributeError:
+        # 纯 tuple 回退
         boxes, txts = result[0], result[1]
-    else:
-        boxes = getattr(result, "boxes", None)
-        txts = getattr(result, "txts", None)
 
     if boxes is None or txts is None or len(boxes) == 0:
         return None
 
     for box, text in zip(boxes, txts):
-        if not text:
+        if not text or not isinstance(text, str):
             continue
         for target in targets:
             if target in text:
