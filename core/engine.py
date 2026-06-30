@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Dict, Optional
 
-from . import ocr
 from .action import click, focus_window
 from .action import wait as action_wait
 from .capture import screenshot
@@ -56,7 +55,6 @@ class AdBotEngine:
         win_cfg = config.get("window", {})
         self._win_keyword = win_cfg.get("title_keyword", "微信")
         self._auto_focus = win_cfg.get("auto_focus", True)
-        self._close_retry = 0  # 关闭按钮重试计数
 
     def run(self) -> Stats:
         """启动主循环（阻塞运行）。"""
@@ -156,51 +154,17 @@ class AdBotEngine:
             action_wait(timing.get("ad_end_wait", 3))
             logger.info("  开始寻找关闭按钮...")
             self.state = State.CLOSE_AD
-            self._close_step = 0
             self.stats.ad_watched += 1
         else:
             logger.info(f"  观看中... 剩余 {remain:.0f}s")
             action_wait(min(check_interval, remain))
 
     def _handle_close_ad(self, timing: dict, match_cfg: dict, templates: dict) -> None:
-        """关闭广告：盲点右上角 → 检查看广告按钮回来没 → 不行再模板匹配。"""
-        if not getattr(self, "_close_step", None):
-            self._close_step = 0
-
-        ad_button_tpl = templates.get("ad_button", "templates/ad_button.png")
-        ad_threshold = match_cfg.get("confidence_threshold", 0.75)
+        """寻找并点击关闭按钮。"""
+        logger.info("  正在寻找关闭按钮...")
         screen = screenshot()
-        sh, sw = screen.shape[:2]
-
-        # 先检查：看广告按钮回来没？
-        if match_template(screen, ad_button_tpl, threshold=ad_threshold):
-            logger.info("  广告已关闭，看广告按钮重新出现")
-            self._close_step = 0
-            self._close_retry = 0
-            self.state = State.CHECK_AD
-            return
-
-        # ---- 方案一：盲点右上角关闭区域 ----
-        blind_positions = [
-            (sw - 100, 100),
-            (sw - 100, 200),
-            (sw - 200, 100),
-            (sw - 150, 150),
-        ]
-
-        if self._close_step < len(blind_positions) * 2:
-            pos_idx = self._close_step % len(blind_positions)
-            x, y = blind_positions[pos_idx]
-            logger.info(f"  盲点关闭位置 ({x}, {y}) [第{self._close_step + 1}次]")
-            self._ensure_focus()
-            click(x, y)
-            self._close_step += 1
-            action_wait(timing.get("post_close_delay", 1.5))
-            return
-
-        # ---- 方案二：模板匹配回退 ----
-        logger.info("  盲点未成功，尝试模板匹配...")
         threshold = match_cfg.get("close_confidence", 0.6)
+
         result = match_template(
             screen,
             templates.get("close_button", "templates/close_button.png"),
@@ -209,14 +173,11 @@ class AdBotEngine:
 
         if result is not None:
             x, y, conf = result
-            logger.info(f"  模板匹配找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
-            self._close_step = 0
-            self._close_retry = 0
+            logger.info(f"  找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
             self._ensure_focus()
             click(x, y)
             action_wait(timing.get("post_close_delay", 1.5))
             self.state = State.CHECK_AD
-            return
-
-        logger.info("  未找到关闭按钮，重试中...")
-        action_wait(timing.get("close_retry_interval", 3))
+        else:
+            logger.info("  未找到关闭按钮，重试中...")
+            action_wait(timing.get("close_retry_interval", 3))
