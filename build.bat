@@ -32,6 +32,7 @@ pyinstaller --onefile ^
     --collect-all yaml ^
     --hidden-import pygetwindow ^
     --hidden-import yaml ^
+    --hidden-import _yaml ^
     --hidden-import core.action ^
     --hidden-import core.capture ^
     --hidden-import core.vision ^
