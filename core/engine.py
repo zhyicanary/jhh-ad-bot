@@ -154,8 +154,7 @@ class AdBotEngine:
         check_interval = timing.get("check_interval", 2)
 
         if remain <= 0:
-            logger.info("  广告观看完毕，等待 1.5s 后寻找关闭按钮...")
-            action_wait(1.5)
+            logger.info("  广告观看完毕，开始寻找关闭按钮...")
             self.state = State.CLOSE_AD
             self.stats.ad_watched += 1
         else:
