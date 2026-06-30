@@ -63,9 +63,6 @@ class AdBotEngine:
         logger.info("===== 广告机器人启动 =====")
         self.stats.start_time = time.time()
 
-        # 初始化 OCR（Windows 原生 OCR）
-        ocr.init()
-
         # 激活微信窗口
         self._ensure_focus()
         action_wait(1.0)
@@ -157,17 +154,50 @@ class AdBotEngine:
         if remain <= 0:
             logger.info("  广告观看完毕，开始寻找关闭按钮...")
             self.state = State.CLOSE_AD
+            self._close_step = 0
             self.stats.ad_watched += 1
         else:
             logger.info(f"  观看中... 剩余 {remain:.0f}s")
             action_wait(min(check_interval, remain))
 
     def _handle_close_ad(self, timing: dict, match_cfg: dict, templates: dict) -> None:
-        """寻找并点击关闭按钮（模板匹配优先，OCR 偶尔回退）。"""
-        logger.info("  正在寻找关闭按钮...")
-        screen = screenshot()
+        """关闭广告：盲点右上角 → 检查看广告按钮回来没 → 不行再模板匹配。"""
+        if not getattr(self, "_close_step", None):
+            self._close_step = 0
 
-        # ---- 方案一：模板匹配（快，99% 命中） ----
+        ad_button_tpl = templates.get("ad_button", "templates/ad_button.png")
+        ad_threshold = match_cfg.get("confidence_threshold", 0.75)
+        screen = screenshot()
+        sh, sw = screen.shape[:2]
+
+        # 先检查：看广告按钮回来没？
+        if match_template(screen, ad_button_tpl, threshold=ad_threshold):
+            logger.info("  广告已关闭，看广告按钮重新出现")
+            self._close_step = 0
+            self._close_retry = 0
+            self.state = State.CHECK_AD
+            return
+
+        # ---- 方案一：盲点右上角关闭区域 ----
+        blind_positions = [
+            (sw - 100, 100),
+            (sw - 100, 200),
+            (sw - 200, 100),
+            (sw - 150, 150),
+        ]
+
+        if self._close_step < len(blind_positions) * 2:
+            pos_idx = self._close_step % len(blind_positions)
+            x, y = blind_positions[pos_idx]
+            logger.info(f"  盲点关闭位置 ({x}, {y}) [第{self._close_step + 1}次]")
+            self._ensure_focus()
+            click(x, y)
+            self._close_step += 1
+            action_wait(timing.get("post_close_delay", 1.5))
+            return
+
+        # ---- 方案二：模板匹配回退 ----
+        logger.info("  盲点未成功，尝试模板匹配...")
         threshold = match_cfg.get("close_confidence", 0.6)
         result = match_template(
             screen,
@@ -178,34 +208,13 @@ class AdBotEngine:
         if result is not None:
             x, y, conf = result
             logger.info(f"  模板匹配找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
+            self._close_step = 0
             self._close_retry = 0
             self._ensure_focus()
             click(x, y)
             action_wait(timing.get("post_close_delay", 1.5))
             self.state = State.CHECK_AD
             return
-
-        # ---- 方案二：OCR 文字识别（只在第 0/5/10/... 次重试时跑，避免拖慢） ----
-        self._close_retry += 1
-        ocr_interval = timing.get("ocr_retry_interval", 5)
-        if match_cfg.get("ocr_enabled", True) and self._close_retry % ocr_interval == 0:
-            ocr_keywords = match_cfg.get(
-                "ocr_close_keywords", ["关闭", "×", "跳过", "关闭广告"]
-            )
-            # 关闭按钮通常在顶部 1/5 区域
-            sh, sw = screen.shape[:2]
-            ocr_region = (0, 0, sw, sh // 5)
-            result = ocr.find_text(screen, ocr_keywords, region=ocr_region)
-
-            if result is not None:
-                x, y, text = result
-                logger.info(f"  OCR 找到 '{text}' 按钮 ({x}, {y})")
-                self._close_retry = 0
-                self._ensure_focus()
-                click(x, y)
-                action_wait(timing.get("post_close_delay", 1.5))
-                self.state = State.CHECK_AD
-                return
 
         logger.info("  未找到关闭按钮，重试中...")
         action_wait(timing.get("close_retry_interval", 3))
