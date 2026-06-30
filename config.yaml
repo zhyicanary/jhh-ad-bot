@@ -6,6 +6,7 @@ templates:
 # ===== 时间控制 =====
 timing:
   ad_watch_seconds: 30 # 每次看广告时长
+  ad_end_wait: 3 # 广告播完后等待弹窗消失(秒)
   check_interval: 2 # 两次检测间隔(秒)
   post_click_delay: 1.5 # 点击"看广告"后等待渲染(秒)
   post_close_delay: 1.5 # 关闭广告后等待(秒)，等小程序回到主界面
