@@ -13,6 +13,7 @@ from enum import Enum, auto
 from .capture import screenshot
 from .vision import match_template
 from .action import click, wait as action_wait, focus_window
+from . import ocr
 
 logger = logging.getLogger(__name__)
 
@@ -156,12 +157,28 @@ class AdBotEngine:
             action_wait(min(check_interval, remain))
 
     def _handle_close_ad(self, timing: dict, match_cfg: dict, templates: dict) -> None:
-        """寻找并点击关闭按钮。"""
+        """寻找并点击关闭按钮（OCR 优先，模板匹配回退）。"""
         logger.info("  正在寻找关闭按钮...")
         screen = screenshot()
-        # 关闭按钮用更低的阈值，因为广告关闭按钮常变化
-        threshold = match_cfg.get("close_confidence", 0.6)
 
+        # ---- 方案一：OCR 文字识别找"关闭/×/跳过" ----
+        if match_cfg.get("ocr_enabled", True):
+            ocr_keywords = match_cfg.get("ocr_close_keywords", ["关闭", "×", "跳过", "关闭广告"])
+            result = ocr.find_text(screen, ocr_keywords)
+        else:
+            result = None
+
+        if result is not None:
+            x, y, text = result
+            logger.info(f"  OCR 找到 '{text}' 按钮 ({x}, {y})")
+            self._ensure_focus()
+            click(x, y)
+            action_wait(timing.get("post_click_delay", 1.5))
+            self.state = State.CHECK_AD
+            return
+
+        # ---- 方案二：模板匹配回退 ----
+        threshold = match_cfg.get("close_confidence", 0.6)
         result = match_template(
             screen,
             templates.get("close_button", "templates/close_button.png"),
@@ -170,7 +187,7 @@ class AdBotEngine:
 
         if result is not None:
             x, y, conf = result
-            logger.info(f"  找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
+            logger.info(f"  模板匹配找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
             self._ensure_focus()
             click(x, y)
             action_wait(timing.get("post_click_delay", 1.5))
