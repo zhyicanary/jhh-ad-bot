@@ -29,7 +29,7 @@ pyinstaller --onefile ^
     --collect-all cv2 ^
     --collect-all pyautogui ^
     --collect-all rapidocr_onnxruntime ^
-    --collect-all yaml ^
+    --collect-all pyyaml ^
     --hidden-import pygetwindow ^
     --hidden-import yaml ^
     --hidden-import _yaml ^
