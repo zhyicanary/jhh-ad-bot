@@ -56,9 +56,11 @@ timing:
 
 matching:
   confidence_threshold: 0.75    # 模板匹配置信度（0-1）
-  close_confidence: 0.6         # 关闭按钮单独阈值（更低，因广告关闭按钮多变）
+  close_confidence: 0.6         # 关闭按钮模板匹配阈值（回退方案）
   scale_steps: 5                # 多尺度匹配步数
   scale_range: [0.8, 1.2]      # 缩放范围
+  ocr_enabled: true             # 启用 Windows 原生 OCR（优先于模板匹配）
+  ocr_close_keywords: ["关闭", "×", "跳过", "关闭广告"] # OCR 查找的关键词
 
 window:
   title_keyword: "微信"          # 目标窗口标题关键词

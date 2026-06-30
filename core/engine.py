@@ -60,6 +60,9 @@ class AdBotEngine:
         logger.info("===== 广告机器人启动 =====")
         self.stats.start_time = time.time()
 
+        # 初始化 OCR（Windows 原生 OCR）
+        ocr.init()
+
         # 激活微信窗口
         self._ensure_focus()
         action_wait(1.0)

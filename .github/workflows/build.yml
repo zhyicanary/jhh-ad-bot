@@ -26,29 +26,16 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: 安装 Tesseract OCR
-        shell: pwsh
-        run: |
-          # 使用 Chocolatey 安装（GitHub Actions 自带）
-          choco install tesseract --no-progress -y
-          # 复制为便携版
-          New-Item -ItemType Directory -Force -Path "tesseract_portable"
-          Copy-Item "C:\Program Files\Tesseract-OCR\*" "tesseract_portable\" -Recurse -Force
-          # 下载简体中文语言包（安装包可能不带）
-          Invoke-WebRequest -Uri "https://github.com/tesseract-ocr/tessdata/raw/main/chi_sim.traineddata" -OutFile "tesseract_portable\tessdata\chi_sim.traineddata"
-          echo "Tesseract 便携版已就绪"
-
       - name: 打包 exe
         shell: cmd
         run: |
           pyinstaller --onefile --name jhh-ad-bot --console ^
             --add-data "config.yaml;." ^
             --add-data "templates;templates" ^
-            --add-data "tesseract_portable;tesseract_portable" ^
             --collect-all cv2 ^
             --collect-all pyautogui ^
             --hidden-import pygetwindow ^
-            --hidden-import pytesseract ^
+            --hidden-import winocr ^
             --hidden-import core.action ^
             --hidden-import core.capture ^
             --hidden-import core.vision ^
