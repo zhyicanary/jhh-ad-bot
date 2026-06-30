@@ -56,6 +56,7 @@ class AdBotEngine:
         win_cfg = config.get("window", {})
         self._win_keyword = win_cfg.get("title_keyword", "微信")
         self._auto_focus = win_cfg.get("auto_focus", True)
+        self._close_retry = 0  # 关闭按钮重试计数
 
     def run(self) -> Stats:
         """启动主循环（阻塞运行）。"""
@@ -162,7 +163,7 @@ class AdBotEngine:
             action_wait(min(check_interval, remain))
 
     def _handle_close_ad(self, timing: dict, match_cfg: dict, templates: dict) -> None:
-        """寻找并点击关闭按钮（模板匹配优先，OCR 回退）。"""
+        """寻找并点击关闭按钮（模板匹配优先，OCR 偶尔回退）。"""
         logger.info("  正在寻找关闭按钮...")
         screen = screenshot()
 
@@ -177,25 +178,29 @@ class AdBotEngine:
         if result is not None:
             x, y, conf = result
             logger.info(f"  模板匹配找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
+            self._close_retry = 0
             self._ensure_focus()
             click(x, y)
             action_wait(timing.get("post_close_delay", 1.5))
             self.state = State.CHECK_AD
             return
 
-        # ---- 方案二：OCR 文字识别（慢，但不用模板） ----
-        if match_cfg.get("ocr_enabled", True):
+        # ---- 方案二：OCR 文字识别（只在第 0/5/10/... 次重试时跑，避免拖慢） ----
+        self._close_retry += 1
+        ocr_interval = timing.get("ocr_retry_interval", 5)
+        if match_cfg.get("ocr_enabled", True) and self._close_retry % ocr_interval == 0:
             ocr_keywords = match_cfg.get(
                 "ocr_close_keywords", ["关闭", "×", "跳过", "关闭广告"]
             )
-            # 关区域大概率在屏幕上半部分，缩小区域加速 OCR
+            # 关闭按钮通常在顶部 1/5 区域
             sh, sw = screen.shape[:2]
-            ocr_region = (0, 0, sw, sh // 3)  # 只扫描顶部 1/3
+            ocr_region = (0, 0, sw, sh // 5)
             result = ocr.find_text(screen, ocr_keywords, region=ocr_region)
 
             if result is not None:
                 x, y, text = result
                 logger.info(f"  OCR 找到 '{text}' 按钮 ({x}, {y})")
+                self._close_retry = 0
                 self._ensure_focus()
                 click(x, y)
                 action_wait(timing.get("post_close_delay", 1.5))
