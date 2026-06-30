@@ -34,9 +34,8 @@ jobs:
             --add-data "templates;templates" ^
             --collect-all cv2 ^
             --collect-all pyautogui ^
-            --collect-all yaml ^
+            --collect-all rapidocr_onnxruntime ^
             --hidden-import pygetwindow ^
-            --hidden-import winocr ^
             --hidden-import yaml ^
             --hidden-import core.action ^
             --hidden-import core.capture ^
