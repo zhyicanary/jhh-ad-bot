@@ -90,23 +90,31 @@ class AdBotEngine:
         self._stop_requested = True
 
     def _ensure_focus(self) -> None:
-        """确保微信/小程序窗口在前台，失败则重试。"""
+        """阻塞等待窗口回到前台，不等到不继续。"""
         if not self._auto_focus:
             return
 
-        # 如果窗口已经在焦点，跳过
+        # 已经在焦点 → 直接继续
         if is_window_in_focus(self._win_keyword):
             return
 
-        # 尝试激活，最多 3 次
-        for attempt in range(3):
+        logger.info(f"窗口 '{self._win_keyword}' 不在前台，尝试激活...")
+
+        for attempt in range(10):  # 最多等约 30 秒
+            # 先尝试强制激活
             focus_window(self._win_keyword)
-            action_wait(0.4)
+
+            # 等一会再检查
+            action_wait(2)
+
             if is_window_in_focus(self._win_keyword):
-                logger.debug(f"窗口 '{self._win_keyword}' 已激活")
+                logger.info(f"窗口 '{self._win_keyword}' 已回到前台")
                 return
 
-        logger.warning(f"窗口 '{self._win_keyword}' 激活失败，请手动切换到微信窗口")
+            if attempt == 2:
+                logger.warning(f"窗口 '{self._win_keyword}' 未响应，请手动切换到微信窗口")
+
+        logger.warning(f"等待窗口 '{self._win_keyword}' 超时，强制继续")
 
     def _tick(self) -> None:
         """执行一次状态机步骤。"""
