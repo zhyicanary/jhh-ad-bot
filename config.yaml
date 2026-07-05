@@ -24,7 +24,7 @@ matching:
 
 # ===== 目标窗口 =====
 window:
-  title_keyword: "微信" # 微信窗口标题关键词（支持部分匹配）
+  title_keyword: "简幻欢|WeChatAppEx|微信" # 窗口关键词(按优先级|分隔)
   auto_focus: true # 是否自动激活窗口
 
 # ===== 循环控制 =====
