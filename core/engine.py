@@ -118,6 +118,9 @@ class AdBotEngine:
 
     def _tick(self) -> None:
         """执行一次状态机步骤。"""
+        # 执行任何操作前先确保窗口在前台
+        self._ensure_focus()
+
         timing = self.config.get("timing", {})
         match_cfg = self.config.get("matching", {})
         templates = self.config.get("templates", {})

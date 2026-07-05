@@ -14,11 +14,13 @@ from typing import Tuple
 logger = logging.getLogger(__name__)
 
 
-def click(x: int, y: int, duration: float = 0.1) -> None:
-    """移动鼠标到 (x, y) 并点击。"""
+def click(x: int, y: int, duration: float = 0.1, clicks: int = 2) -> None:
+    """移动鼠标到 (x, y) 并点击（默认双击，防止漏点）。"""
     import pyautogui
     pyautogui.moveTo(x, y, duration=duration)
-    pyautogui.click()
+    for _ in range(clicks):
+        pyautogui.click()
+        time.sleep(0.05)
 
 
 def scroll(x: int, y: int, clicks: int = -3) -> None:
