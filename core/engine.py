@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Dict, Optional
 
-from .action import click, focus_window
+from .action import click, focus_window, is_window_in_focus
 from .action import wait as action_wait
 from .capture import screenshot
 from .vision import match_template
@@ -90,12 +90,23 @@ class AdBotEngine:
         self._stop_requested = True
 
     def _ensure_focus(self) -> None:
-        """确保微信窗口在前台。"""
-        if self._auto_focus:
-            ok = focus_window(self._win_keyword)
-            if ok:
-                logger.debug(f"已激活窗口 '{self._win_keyword}'")
-                action_wait(0.3)
+        """确保微信/小程序窗口在前台，失败则重试。"""
+        if not self._auto_focus:
+            return
+
+        # 如果窗口已经在焦点，跳过
+        if is_window_in_focus(self._win_keyword):
+            return
+
+        # 尝试激活，最多 3 次
+        for attempt in range(3):
+            focus_window(self._win_keyword)
+            action_wait(0.4)
+            if is_window_in_focus(self._win_keyword):
+                logger.debug(f"窗口 '{self._win_keyword}' 已激活")
+                return
+
+        logger.warning(f"窗口 '{self._win_keyword}' 激活失败，请手动切换到微信窗口")
 
     def _tick(self) -> None:
         """执行一次状态机步骤。"""

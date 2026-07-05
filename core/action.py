@@ -184,8 +184,10 @@ def _flash_taskbar(hwnd: int) -> None:
 def _force_foreground(hwnd: int) -> bool:
     """强制将窗口置前（绕过 Windows 前台锁）。
 
-    Windows 的前台锁阻止程序在自身不是前台时把其他窗口置前。
-    这里通过 AttachThreadInput 绕过此限制。
+    多层回退：
+        1. AttachThreadInput（绕过前台锁）
+        2. Alt 键模拟（改变前台锁上下文）
+        3. 最小化再还原（触发窗口重新激活）
     """
     if not _HAS_WIN32:
         return False
@@ -195,17 +197,15 @@ def _force_foreground(hwnd: int) -> bool:
     if _is_foreground(hwnd):
         return True
 
-    # 获取当前前台窗口线程ID
+    # ---- 第 1 层：AttachThreadInput ---- 
     foreground_hwnd = user32.GetForegroundWindow()
     target_tid = user32.GetWindowThreadProcessId(hwnd, None)
     current_tid = user32.GetWindowThreadProcessId(foreground_hwnd, None)
 
-    # 附加线程输入（绕过前台锁的关键）
     attached = False
     if target_tid != current_tid:
         attached = user32.AttachThreadInput(current_tid, target_tid, True) != 0
 
-    # 多步激活：恢复 → 置前 → 置顶
     user32.ShowWindow(hwnd, _SW_RESTORE)
     ok = user32.SetForegroundWindow(hwnd)
     user32.SetWindowPos(
@@ -213,11 +213,33 @@ def _force_foreground(hwnd: int) -> bool:
         _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW,
     )
 
-    # 分离线程输入
     if attached:
         user32.AttachThreadInput(current_tid, target_tid, False)
 
-    return bool(ok)
+    if _is_foreground(hwnd):
+        return True
+
+    # ---- 第 2 层：模拟 Alt 键（改变前台锁上下文） ----
+    user32.keybd_event(0x12, 0, 0, 0)  # Alt down
+    user32.keybd_event(0x12, 0, 2, 0)  # Alt up
+    time.sleep(0.05)
+
+    ok = user32.SetForegroundWindow(hwnd)
+    user32.SetWindowPos(
+        hwnd, _HWND_TOP, 0, 0, 0, 0,
+        _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW,
+    )
+
+    if _is_foreground(hwnd):
+        return True
+
+    # ---- 第 3 层：最小化再还原 ----
+    user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+    time.sleep(0.1)
+    user32.ShowWindow(hwnd, _SW_RESTORE)
+    ok = user32.SetForegroundWindow(hwnd)
+
+    return _is_foreground(hwnd)
 
 
 def _focus_windows(keyword: str) -> bool:
@@ -257,6 +279,27 @@ def _focus_windows(keyword: str) -> bool:
         _flash_taskbar(hwnd)
 
     return ok
+
+
+def is_window_in_focus(title_keyword: str) -> bool:
+    """检查指定关键词的窗口是否当前在前台。
+
+    支持 | 分隔的多个关键词，任一匹配即可。
+    """
+    keywords = [k.strip() for k in title_keyword.split("|")] if "|" in title_keyword else [title_keyword]
+    if not _HAS_WIN32:
+        return False
+    try:
+        current = ctypes.windll.user32.GetForegroundWindow()
+        buf = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetWindowTextW(current, buf, 256)
+        current_title = buf.value
+        for kw in keywords:
+            if kw.lower() in current_title.lower():
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def get_screen_size() -> Tuple[int, int]:
