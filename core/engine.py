@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class State(Enum):
     CHECK_AD = auto()  # 寻找"看广告"按钮
-    WATCHING = auto()  # 正在观看广告（等待倒计时）
+    WATCHING = auto()  # 正在观看广告（实时检测画面变化）
     CLOSE_AD = auto()  # 寻找关闭按钮
     STOP = auto()  # 停止
 
@@ -52,6 +52,8 @@ class AdBotEngine:
         self.stats = Stats()
         self._watch_start: float = 0.0
         self._stop_requested = False
+        self._last_screen = None
+        self._still_count = 0
         win_cfg = config.get("window", {})
         self._win_keyword = win_cfg.get("title_keyword", "微信")
         self._auto_focus = win_cfg.get("auto_focus", True)
@@ -131,7 +133,7 @@ class AdBotEngine:
             self._handle_check_ad(timing, match_cfg, templates)
 
         elif self.state == State.WATCHING:
-            self._handle_watching(timing)
+            self._handle_watching(timing, match_cfg)
 
         elif self.state == State.CLOSE_AD:
             self._handle_close_ad(timing, match_cfg, templates)
@@ -162,26 +164,67 @@ class AdBotEngine:
             action_wait(timing.get("post_click_delay", 1.5))
             self.state = State.WATCHING
             self._watch_start = time.time()
+            self._last_screen = None
+            self._still_count = 0
         else:
             logger.info("  未找到广告按钮，等待下一轮...")
             self.stats.ad_skipped += 1
             action_wait(timing.get("check_interval", 2))
 
-    def _handle_watching(self, timing: dict) -> None:
-        """等待广告播放完毕。"""
-        elapsed = time.time() - self._watch_start
-        remain = timing.get("ad_watch_seconds", 30) - elapsed
-        check_interval = timing.get("check_interval", 2)
+    def _calculate_screen_diff(self, prev, curr) -> float:
+        """计算两帧屏幕截图的平均像素差异（0-255）。"""
+        import cv2
+        prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+        curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY)
+        return cv2.absdiff(prev_gray, curr_gray).mean()
 
-        if remain <= 0:
-            logger.info("  广告观看完毕，等待弹窗消失...")
+    def _handle_watching(self, timing: dict, match_cfg: dict) -> None:
+        """等待广告播放完毕（实时检测画面变化）。"""
+        elapsed = time.time() - self._watch_start
+        check_interval = timing.get("check_interval", 2)
+        max_seconds = timing.get("ad_max_seconds", 35)
+        min_seconds = timing.get("ad_min_seconds", 8)
+
+        # 超时保护 → 强制关闭
+        if elapsed > max_seconds:
+            logger.info("  广告播放超时，强制进入关闭阶段")
             action_wait(timing.get("ad_end_wait", 3))
-            logger.info("  开始寻找关闭按钮...")
             self.state = State.CLOSE_AD
-            self.stats.ad_watched += 1
-        else:
-            logger.info(f"  观看中... 剩余 {remain:.0f}s")
-            action_wait(min(check_interval, remain))
+            return
+
+        # 最小观看时间内不做画面检测（防止点击没反应就跳过）
+        if elapsed < min_seconds:
+            remain = int(min_seconds - elapsed)
+            logger.info(f"  广告播放中，还需 {remain}s 开始检测")
+            action_wait(check_interval)
+            return
+
+        # 画面变化检测
+        if match_cfg.get("screen_diff_enabled", True):
+            screen = screenshot()
+            if self._last_screen is not None:
+                diff = self._calculate_screen_diff(self._last_screen, screen)
+                threshold = match_cfg.get("screen_diff_threshold", 5.0)
+                still_limit = match_cfg.get("screen_diff_still_count", 3)
+
+                if diff < threshold:
+                    self._still_count += 1
+                    logger.info(f"  画面静止 ({diff:.1f}) 第{self._still_count}次")
+
+                    if self._still_count >= still_limit:
+                        logger.info("  广告播放完毕（画面静止），进入关闭阶段")
+                        self.stats.ad_watched += 1
+                        action_wait(timing.get("ad_end_wait", 3))
+                        self.state = State.CLOSE_AD
+                        return
+                else:
+                    if self._still_count > 0:
+                        logger.debug(f"  画面恢复变化 ({diff:.1f}), 重置静止计数")
+                    self._still_count = 0
+
+            self._last_screen = screen
+
+        action_wait(check_interval)
 
     def _handle_close_ad(self, timing: dict, match_cfg: dict, templates: dict) -> None:
         """寻找并点击关闭按钮。"""

@@ -5,7 +5,8 @@ templates:
 
 # ===== 时间控制 =====
 timing:
-  ad_watch_seconds: 30 # 每次看广告时长
+  ad_max_seconds: 35 # 广告最大等待时间(秒)，超时强制关闭
+  ad_min_seconds: 8 # 最短观看时间(秒)，防止点击没反应就进关闭
   ad_end_wait: 3 # 广告播完后等待弹窗消失(秒)
   check_interval: 2 # 两次检测间隔(秒)
   post_click_delay: 1.5 # 点击"看广告"后等待渲染(秒)
@@ -18,9 +19,10 @@ matching:
   close_confidence: 0.6 # 关闭按钮模板匹配阈值(回退方案)
   scale_steps: 5 # 多尺度匹配的缩放步数
   scale_range: [0.8, 1.2] # 缩放范围
-  # OCR 文字识别（优先于模板匹配）
-  ocr_enabled: true # 是否启用 OCR
-  ocr_close_keywords: ["关闭", "×", "跳过", "关闭广告"] # 关闭按钮关键词
+  # 屏幕变化检测
+  screen_diff_enabled: true # 启用画面变化检测
+  screen_diff_threshold: 5.0 # 画面静止阈值(0-255)，越小越严格
+  screen_diff_still_count: 3 # 连续静止几次后认为广告结束
 
 # ===== 目标窗口 =====
 window:
