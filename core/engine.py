@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Dict, Optional
 
+from . import ocr
 from .action import click, focus_window, is_window_in_focus, set_target
 from .action import wait as action_wait
 from .capture import screenshot
@@ -62,6 +63,9 @@ class AdBotEngine:
         """启动主循环（阻塞运行）。"""
         logger.info("===== 广告机器人启动 =====")
         self.stats.start_time = time.time()
+
+        # 初始化 RapidOCR
+        ocr.init()
 
         # 激活微信窗口
         self._ensure_focus()
@@ -227,20 +231,21 @@ class AdBotEngine:
         action_wait(check_interval)
 
     def _handle_close_ad(self, timing: dict, match_cfg: dict, templates: dict) -> None:
-        """寻找并点击关闭按钮。"""
+        """寻找并点击关闭按钮（仅 OCR 文字识别）。"""
         logger.info("  正在寻找关闭按钮...")
         screen = screenshot()
-        threshold = match_cfg.get("close_confidence", 0.6)
+        sh, sw = screen.shape[:2]
 
-        result = match_template(
-            screen,
-            templates.get("close_button", "templates/close_button.png"),
-            threshold=threshold,
-        )
+        # 关闭按钮通常在右上角，只扫这个区域加速
+        region = (sw * 3 // 4, 0, sw // 4, sh // 4)
+
+        ocr_cfg = match_cfg.get("ocr_close", {})
+        keywords = ocr_cfg.get("keywords", ["关闭", "×", "跳过", "关闭广告"])
+        result = ocr.find_text(screen, keywords, region=region)
 
         if result is not None:
-            x, y, conf = result
-            logger.info(f"  找到关闭按钮 ({x}, {y}) 置信度: {conf:.2%}")
+            x, y, text = result
+            logger.info(f"  找到关闭按钮 '{text}' ({x}, {y})")
             self._ensure_focus()
             click(x, y)
             action_wait(timing.get("post_close_delay", 1.5))

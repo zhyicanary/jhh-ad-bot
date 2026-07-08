@@ -13,20 +13,72 @@ from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
-# ── Win32 PostMessage 点击 ──
-# 直接向窗口投递鼠标消息，绕过 pyautogui 的系统光标限制
-_target_hwnd: int | None = None
-_WM_LBUTTONDOWN = 0x0201
-_WM_LBUTTONUP = 0x0202
-_MK_LBUTTON = 0x0001
+# ── Win32 API 检测 ──
+_HAS_WIN32 = platform.system() == "Windows" and hasattr(ctypes, "windll")
+
+# ── Win32 SendInput 鼠标点击 ──
+# 系统级输入模拟（SRA 方案），真实度最高
+_SENDINPUT_READY = False
+if _HAS_WIN32:
+    _INPUT_MOUSE = 0
+    _MOUSEEVENTF_LEFTDOWN = 0x0002
+    _MOUSEEVENTF_LEFTUP = 0x0004
+
+    class _MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", ctypes.c_long),
+            ("dy", ctypes.c_long),
+            ("mouseData", ctypes.c_uint32),
+            ("dwFlags", ctypes.c_uint32),
+            ("time", ctypes.c_uint32),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+
+    class _INPUT_UNION(ctypes.Union):
+        _fields_ = [("mi", _MOUSEINPUT)]
+
+    class _INPUT(ctypes.Structure):
+        _fields_ = [
+            ("type", ctypes.c_uint32),
+            ("union", _INPUT_UNION),
+        ]
+
+    _SENDINPUT_READY = True
 
 
-class _POINT(ctypes.Structure):
-    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+def click(x: int, y: int, duration: float = 0.1, clicks: int = 2) -> None:
+    """使用 SendInput 模拟鼠标点击（系统级，最真实）。
+
+    先移动光标到目标位置，然后发送按下+弹起事件。
+    非 Windows 平台回退到 pyautogui。
+    """
+    if _SENDINPUT_READY:
+        user32 = ctypes.windll.user32
+        user32.SetCursorPos(x, y)
+        time.sleep(0.05)
+
+        for _ in range(clicks):
+            mi = _MOUSEINPUT(0, 0, 0, _MOUSEEVENTF_LEFTDOWN, 0, None)
+            inp = _INPUT(_INPUT_MOUSE, _INPUT_UNION(mi))
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+            time.sleep(0.02)
+
+            mi = _MOUSEINPUT(0, 0, 0, _MOUSEEVENTF_LEFTUP, 0, None)
+            inp = _INPUT(_INPUT_MOUSE, _INPUT_UNION(mi))
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+            time.sleep(0.05)
+        return
+
+    # 非 Windows 回退
+    import pyautogui
+    pyautogui.moveTo(x, y, duration=duration)
+    for _ in range(clicks):
+        pyautogui.click()
+        time.sleep(0.05)
 
 
 def set_target(keywords_str: str) -> None:
-    """根据关键词查找并缓存目标窗口句柄，供 PostMessage 点击使用。"""
+    """缓存目标窗口句柄（后续可配合窗口截图等使用）。"""
     global _target_hwnd
     if not _HAS_WIN32:
         return
@@ -35,41 +87,9 @@ def set_target(keywords_str: str) -> None:
         hwnd = _find_hwnd_by_keyword(kw)
         if hwnd:
             _target_hwnd = hwnd
-            logger.debug(f"PostMessage 目标窗口: {kw} (hwnd={hwnd})")
+            logger.debug(f"目标窗口: {kw} (hwnd={hwnd})")
             return
     _target_hwnd = None
-
-
-def _post_click(hwnd: int, screen_x: int, screen_y: int) -> None:
-    """向窗口句柄投递左键点击消息（客户端坐标），不移动系统光标。"""
-    user32 = ctypes.windll.user32
-    pt = _POINT(screen_x, screen_y)
-    user32.ScreenToClient(hwnd, ctypes.byref(pt))
-    lparam = (pt.y << 16) | (pt.x & 0xFFFF)
-    user32.PostMessageW(hwnd, _WM_LBUTTONDOWN, _MK_LBUTTON, lparam)
-    time.sleep(0.02)
-    user32.PostMessageW(hwnd, _WM_LBUTTONUP, 0, lparam)
-
-
-def click(x: int, y: int, duration: float = 0.1, clicks: int = 2) -> None:
-    """点击屏幕坐标 (x, y)。
-
-    优先使用 Win32 PostMessage 直接投递到目标窗口（不移动光标）；
-    若未缓存目标窗口，回退到 pyautogui 系统光标点击。
-    """
-    # 优先：PostMessage 直接投递
-    if _target_hwnd is not None and _HAS_WIN32:
-        for _ in range(clicks):
-            _post_click(_target_hwnd, x, y)
-            time.sleep(0.05)
-        return
-
-    # 回退：pyautogui 系统光标
-    import pyautogui
-    pyautogui.moveTo(x, y, duration=duration)
-    for _ in range(clicks):
-        pyautogui.click()
-        time.sleep(0.05)
 
 
 def scroll(x: int, y: int, clicks: int = -3) -> None:
@@ -151,8 +171,6 @@ def _focus_macos(keyword: str) -> bool:
 # ──────────────────────────────────────────────
 # Windows 焦点管理（Win32 API 直调，不依赖 pygetwindow）
 # ──────────────────────────────────────────────
-
-_HAS_WIN32 = platform.system() == "Windows" and hasattr(ctypes, "windll")
 
 # Win32 常量
 _SW_RESTORE = 9
