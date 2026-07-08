@@ -13,9 +13,58 @@ from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
+# ── Win32 PostMessage 点击 ──
+# 直接向窗口投递鼠标消息，绕过 pyautogui 的系统光标限制
+_target_hwnd: int | None = None
+_WM_LBUTTONDOWN = 0x0201
+_WM_LBUTTONUP = 0x0202
+_MK_LBUTTON = 0x0001
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+def set_target(keywords_str: str) -> None:
+    """根据关键词查找并缓存目标窗口句柄，供 PostMessage 点击使用。"""
+    global _target_hwnd
+    if not _HAS_WIN32:
+        return
+    keywords = [k.strip() for k in keywords_str.split("|")] if "|" in keywords_str else [keywords_str]
+    for kw in keywords:
+        hwnd = _find_hwnd_by_keyword(kw)
+        if hwnd:
+            _target_hwnd = hwnd
+            logger.debug(f"PostMessage 目标窗口: {kw} (hwnd={hwnd})")
+            return
+    _target_hwnd = None
+
+
+def _post_click(hwnd: int, screen_x: int, screen_y: int) -> None:
+    """向窗口句柄投递左键点击消息（客户端坐标），不移动系统光标。"""
+    user32 = ctypes.windll.user32
+    pt = _POINT(screen_x, screen_y)
+    user32.ScreenToClient(hwnd, ctypes.byref(pt))
+    lparam = (pt.y << 16) | (pt.x & 0xFFFF)
+    user32.PostMessageW(hwnd, _WM_LBUTTONDOWN, _MK_LBUTTON, lparam)
+    time.sleep(0.02)
+    user32.PostMessageW(hwnd, _WM_LBUTTONUP, 0, lparam)
+
 
 def click(x: int, y: int, duration: float = 0.1, clicks: int = 2) -> None:
-    """移动鼠标到 (x, y) 并点击（默认双击，防止漏点）。"""
+    """点击屏幕坐标 (x, y)。
+
+    优先使用 Win32 PostMessage 直接投递到目标窗口（不移动光标）；
+    若未缓存目标窗口，回退到 pyautogui 系统光标点击。
+    """
+    # 优先：PostMessage 直接投递
+    if _target_hwnd is not None and _HAS_WIN32:
+        for _ in range(clicks):
+            _post_click(_target_hwnd, x, y)
+            time.sleep(0.05)
+        return
+
+    # 回退：pyautogui 系统光标
     import pyautogui
     pyautogui.moveTo(x, y, duration=duration)
     for _ in range(clicks):

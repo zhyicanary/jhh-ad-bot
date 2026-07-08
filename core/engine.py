@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Dict, Optional
 
-from .action import click, focus_window, is_window_in_focus
+from .action import click, focus_window, is_window_in_focus, set_target
 from .action import wait as action_wait
 from .capture import screenshot
 from .vision import match_template
@@ -96,6 +96,7 @@ class AdBotEngine:
 
         # 已经在焦点 → 直接继续
         if is_window_in_focus(self._win_keyword):
+            set_target(self._win_keyword)
             return
 
         logger.info(f"窗口 '{self._win_keyword}' 不在前台，尝试激活...")
@@ -109,6 +110,7 @@ class AdBotEngine:
 
             if is_window_in_focus(self._win_keyword):
                 logger.info(f"窗口 '{self._win_keyword}' 已回到前台")
+                set_target(self._win_keyword)  # 缓存 hwnd 给 PostMessage 用
                 return
 
             if attempt == 2:
