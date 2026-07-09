@@ -71,44 +71,18 @@ def _enable_dpi_awareness() -> None:
 _enable_dpi_awareness()
 
 
-def _get_dpi_scale() -> float:
-    """获取当前显示器的 DPI 缩放比例（1.0 = 100%，1.5 = 150%）。"""
-    if not _HAS_WIN32:
-        return 1.0
-    try:
-        user32 = ctypes.windll.user32
-        # 获取实际 DPI
-        hdc = user32.GetDC(0)
-        dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
-        user32.ReleaseDC(0, hdc)
-        return dpi / 96.0
-    except Exception:
-        return 1.0
-
-
-def _physical_to_logical(x: int, y: int) -> tuple[int, int]:
-    """将物理像素坐标（mss 截图坐标系）转换为逻辑像素坐标（SetCursorPos 坐标系）。"""
-    scale = _get_dpi_scale()
-    if scale == 1.0:
-        return x, y
-    return int(x / scale), int(y / scale)
-
-
 def click(x: int, y: int, duration: float = 0.1, clicks: int = 1) -> None:
     """使用 SendInput 模拟鼠标点击（系统级，最真实）。
 
-    自动处理 DPI 缩放：截图坐标（物理像素）→ 光标坐标（逻辑像素）。
+    DPI 感知已启用，截图坐标与光标坐标系一致（物理像素），无需转换。
     移动光标时模拟轨迹，避免部分应用检测瞬移忽略点击。
     非 Windows 平台回退到 pyautogui。
     """
     if _SENDINPUT_READY:
         user32 = ctypes.windll.user32
 
-        # DPI 转换：截图是物理像素，SetCursorPos 需要逻辑像素
-        lx, ly = _physical_to_logical(x, y)
-
-        # 模拟鼠标移动轨迹（从当前位置逐步移动到目标）
-        _move_with_trajectory(user32, lx, ly)
+        # DPI 感知已启用，截图坐标与 SetCursorPos 坐标系一致（均为物理像素）
+        _move_with_trajectory(user32, x, y)
         time.sleep(0.08)  # 等光标稳定
 
         for i in range(clicks):
