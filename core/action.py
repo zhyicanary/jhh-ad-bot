@@ -13,6 +13,9 @@ from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
+# 目标窗口句柄（由 set_target 设置，供 get_window_rect 使用）
+_target_hwnd: int | None = None
+
 # ── Win32 API 检测 ──
 _HAS_WIN32 = platform.system() == "Windows" and hasattr(ctypes, "windll")
 
@@ -152,6 +155,21 @@ def set_target(keywords_str: str) -> None:
             return
     _target_hwnd = None
 
+
+def get_window_rect() -> tuple[int, int, int, int] | None:
+    """获取目标窗口的区域。
+
+    Returns:
+        (left, top, width, height) 屏幕绝对坐标，或 None（无目标窗口）。
+    """
+    if not _HAS_WIN32 or _target_hwnd is None:
+        return None
+    try:
+        rect = wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(_target_hwnd, ctypes.byref(rect))
+        return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+    except Exception:
+        return None
 
 def scroll(x: int, y: int, clicks: int = -3) -> None:
     """在 (x, y) 位置滚动鼠标滚轮。负值向下滚动。"""
