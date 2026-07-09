@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""jhh-ad-bot - 简幻欢看广告积分助手
+"""jhh-ad-bot - 简幻欢自动化助手
 
-为简幻欢小程序自动观看广告获取积分。
+自动完成简幻欢微信小程序的签到和观看广告任务：
+  1. 激活微信窗口
+  2. 关闭订阅提醒弹窗
+  3. 签到
+  4. 循环观看广告（点击→关闭插屏→等30s→关闭→领奖励）
+  5. 达到每日上限后自动停止
 
 用法:
     python main.py                    # 默认配置启动
     python main.py -c config.yaml     # 指定配置文件
     python main.py --once             # 只执行一轮后停止
+    python main.py -v                 # 详细日志
 """
 
 import argparse
@@ -36,7 +42,7 @@ def load_config(path: str) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="简幻欢看广告积分助手")
+    parser = argparse.ArgumentParser(description="简幻欢自动化助手 - 签到+看广告积分")
     parser.add_argument("-c", "--config", default="config.yaml", help="配置文件路径")
     parser.add_argument("--once", action="store_true", help="只执行一轮")
     parser.add_argument("-v", "--verbose", action="store_true", help="详细日志")
@@ -53,10 +59,6 @@ def main():
     # 加载配置（支持 PyInstaller 打包路径）
     config_path = resource_path(args.config)
     config = load_config(config_path)
-
-    # 将所有模板路径解析为绝对路径（支持 PyInstaller 打包路径）
-    for key, path in config.get("templates", {}).items():
-        config["templates"][key] = resource_path(path)
 
     if args.once:
         config.setdefault("loop", {})["max_rounds"] = 1

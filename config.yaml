@@ -1,36 +1,42 @@
-# ===== 模板图片路径 =====
-templates:
-  ad_button: "templates/ad_button.png" # "看广告"按钮截图
+# ===== 目标窗口 =====
+window:
+  title_keyword: "简幻欢|WeChatAppEx|微信"  # 窗口关键词(按优先级|分隔)
+  auto_focus: true                           # 每次操作前自动激活窗口
 
 # ===== 时间控制 =====
 timing:
-  ad_max_seconds: 35 # 广告最大等待时间(秒)，超时强制关闭
-  ad_min_seconds: 8 # 最短观看时间(秒)，防止点击没反应就进关闭
-  ad_end_wait: 3 # 广告播完后等待弹窗消失(秒)
-  check_interval: 2 # 两次检测间隔(秒)
-  post_click_delay: 1.5 # 点击"看广告"后等待渲染(秒)
-  post_close_delay: 1.5 # 关闭广告后等待(秒)，等小程序回到主界面
-  close_retry_interval: 3 # 关闭按钮重试间隔(秒)
+  init_wait: 3               # 启动后等待窗口稳定(秒)
+  ad_click_wait: 2           # 点击"观看广告"后等待(秒)
+  ad_watch_seconds: 32       # 广告观看时长(秒)，略大于30s留余量
+  check_interval: 2          # 通用检测间隔(秒)
+  close_ad_wait: 2           # 关闭广告后等待(秒)
+  reward_wait: 3             # 等待奖励提示(秒)
 
-# ===== 识别参数 =====
+# ===== OCR 识别关键词 =====
 matching:
-  confidence_threshold: 0.75 # 模板匹配置信度(看广告按钮)
-  scale_steps: 5 # 多尺度匹配的缩放步数
-  scale_range: [0.8, 1.2] # 缩放范围
-  # 屏幕变化检测
-  screen_diff_enabled: true # 启用画面变化检测
-  screen_diff_threshold: 5.0 # 画面静止阈值(0-255)，越小越严格
-  screen_diff_still_count: 3 # 连续静止几次后认为广告结束
-  # OCR 文字识别（关闭按钮使用，替代模板匹配）
-  ocr_close:
-    enabled: true
-    keywords: ["关闭", "×", "跳过", "关闭广告"]
-
-# ===== 目标窗口 =====
-window:
-  title_keyword: "简幻欢|WeChatAppEx|微信" # 窗口关键词(按优先级|分隔)
-  auto_focus: true # 是否自动激活窗口
+  # 订阅提醒弹窗
+  subscribe_keywords: ["订阅提醒", "好的", "不再提示", "不再提醒"]
+  # 签到
+  checkin_keywords: ["签到"]
+  # 观看广告按钮
+  ad_keywords: ["观看广告", "看广告"]
+  # 关闭广告按钮
+  close_keywords: ["关闭", "关闭广告"]
+  # 广告中断弹窗（误点关闭导致）
+  interrupt_keywords: ["暂未获得奖励", "继续", "放弃"]
+  continue_keywords: ["继续"]
+  # 奖励提示
+  reward_keywords: ["获得观看积分", "积分成功", "观看积分"]
+  loading_keywords: ["加载中"]
+  # 今日上限提示
+  limit_keywords: ["今日", "上限", "次数已用完", "已达上限", "已用完"]
+  # 弹窗×按钮（插屏广告）
+  popup_close_keywords: ["×", "X", "✕", "✖"]
+  # 通用关闭弹窗按钮
+  dismiss_keywords: ["确定", "知道了", "好的"]
+  # 连续未找到"观看广告"多少次后认为达到每日上限
+  max_ad_not_found: 5
 
 # ===== 循环控制 =====
 loop:
-  max_rounds: 0 # 最大循环次数，0=无限
+  max_rounds: 0  # 最大循环次数，0=无限

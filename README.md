@@ -1,34 +1,33 @@
-# jhh-ad-bot — 简幻欢看广告积分助手
+# jhh-ad-bot — 简幻欢自动化助手
 
-自动观看简幻欢微信小程序中的广告，获取积分。
+自动完成简幻欢微信小程序的**签到**和**观看广告**任务，获取积分。
 
-## 下载使用（推荐）
+## 工作流程
+
+```
+INIT (激活窗口)
+  → DISMISS_SUBSCRIBE (关闭订阅提醒弹窗)
+  → CHECK_IN (签到)
+  → CLICK_AD (点击"观看广告")
+      ↻ 处理插屏广告弹窗(×按钮)
+  → WATCHING_AD (等待30秒)
+      ↻ 检测"暂未获得奖励"弹窗 → 点击"继续"
+  → CLOSE_AD (点击"关闭"退出广告)
+  → WAITING_REWARD (等待"加载中"→"获得积分")
+      ↑                              ↓
+      └──────── 循环直到每日上限 ──────┘
+```
+
+## 下载使用
 
 从 [Releases](https://github.com/zhyicanary/jhh-ad-bot/releases) 下载最新 `jhh-ad-bot.exe`：
 
-1. 新建一个文件夹，把 `jhh-ad-bot.exe` 放进去
-2. 在同目录下创建 `templates/` 文件夹
-3. **准备模板截图**（最重要的一步）：
-   - 打开微信 → 打开简幻欢小程序 → 到"看广告"按钮出现的界面
-   - 截图 → 只把按钮本身裁切出来 → 保存为 `templates/ad_button.png`
-   - 播放广告后关闭按钮出现时同样操作 → 保存为 `templates/close_button.png`
-4. 在同目录下放 `config.yaml`（可改配置）
-5. 双击 exe 运行，微信窗口保持在前台
+1. 新建文件夹，放入 `jhh-ad-bot.exe` 和 `config.yaml`
+2. 打开微信，进入简幻欢小程序
+3. 双击 `jhh-ad-bot.exe` 运行
+4. 保持微信窗口在前台
 
-> 模板图必须是**你自己电脑上截的**，背景越干净匹配效果越好。
-
-## 原理
-
-通过 OpenCV 模板匹配识别屏幕上的按钮，模拟鼠标点击自动完成"看广告→等待→关闭"循环。
-
-```
-┌───────────┐     ┌───────────┐     ┌───────────┐
-│ CHECK_AD  │────>│  WATCHING │────>│  CLOSE_AD │
-│ 找广告按钮  │     │  等待播放   │     │ 找关闭按钮  │
-└───────────┘     └───────────┘     └───────────┘
-       ^                                  │
-       └──────────────────────────────────┘
-```
+> 无需模板截图，全部通过 OCR 文字识别定位按钮。
 
 ## 从源码运行
 
@@ -44,42 +43,56 @@ python main.py -v                 # 详细日志
 编辑 `config.yaml` 调整参数：
 
 ```yaml
-templates:
-  ad_button: "templates/ad_button.png"       # 广告按钮模板路径
-  close_button: "templates/close_button.png" # 关闭按钮模板路径
-
-timing:
-  ad_watch_seconds: 30          # 每次观看广告时长（秒）
-  check_interval: 2             # 检测间隔（秒）
-  post_click_delay: 1.5         # 点击后等待渲染（秒）
-  close_retry_interval: 3       # 关闭按钮重试间隔（秒）
-
-matching:
-  confidence_threshold: 0.75    # 模板匹配置信度（0-1）
-  close_confidence: 0.6         # 关闭按钮模板匹配阈值（回退方案）
-  scale_steps: 5                # 多尺度匹配步数
-  scale_range: [0.8, 1.2]      # 缩放范围
-  ocr_enabled: true             # 启用 Windows 原生 OCR（优先于模板匹配）
-  ocr_close_keywords: ["关闭", "×", "跳过", "关闭广告"] # OCR 查找的关键词
-
+# 目标窗口
 window:
-  title_keyword: "微信"          # 目标窗口标题关键词
-  auto_focus: true               # 每次点击前自动激活窗口
+  title_keyword: "简幻欢|WeChatAppEx|微信"
+  auto_focus: true
 
+# 时间控制
+timing:
+  ad_watch_seconds: 32    # 广告观看时长(秒)
+  ad_click_wait: 2        # 点击后等待(秒)
+  check_interval: 2       # 检测间隔(秒)
+
+# OCR 关键词（可按需调整）
+matching:
+  ad_keywords: ["观看广告", "看广告"]
+  close_keywords: ["关闭", "关闭广告"]
+  popup_close_keywords: ["×", "X"]
+  max_ad_not_found: 5     # 连续未找到广告多少次后停止
+
+# 循环
 loop:
-  max_rounds: 0                  # 最大循环次数（0=无限）
+  max_rounds: 0           # 0=无限
 ```
+
+## 技术架构
+
+| 模块 | 作用 |
+|------|------|
+| `core/engine.py` | 8状态有限状态机，驱动完整自动化流程 |
+| `core/ocr.py` | RapidOCR 文字识别，定位屏幕上的按钮文字 |
+| `core/action.py` | Win32 SendInput 鼠标模拟 + DPI 感知 + 轨迹移动 |
+| `core/capture.py` | mss 高性能屏幕截图 |
+
+### 关键设计
+
+- **全 OCR 识别**：不依赖模板图片，通过文字识别定位所有 UI 元素
+- **DPI 感知**：启用 Per-Monitor DPI Awareness，截图与光标坐标系一致
+- **鼠标轨迹模拟**：ease-out cubic 缓动移动，避免瞬移被检测忽略
+- **点击验证**：关键步骤点击后截图验证，失败自动重试
+- **插屏弹窗处理**：点击"观看广告"后检测插屏弹窗，自动关闭×再重新点击
+- **广告中断保护**：30s观看期间检测"暂未获得奖励"弹窗，自动点击"继续"
+- **每日上限检测**：连续多次找不到"观看广告"按钮时自动停止
 
 ## 构建 exe
 
 推送 `v*` 标签触发 GitHub Actions 自动打包：
 
 ```bash
-git tag v0.0.9
-git push origin v0.0.9
+git tag v1.0.0
+git push origin v1.0.0
 ```
-
-打包产物自动发布到 GitHub Releases。
 
 ## 项目结构
 
@@ -89,11 +102,11 @@ jhh-ad-bot/
 ├── config.yaml              # 配置文件
 ├── requirements.txt         # Python 依赖
 ├── core/
-│   ├── engine.py            # 状态机引擎
-│   ├── capture.py           # 截图模块
-│   ├── vision.py            # 图像识别模块
-│   └── action.py            # 鼠标/窗口操控模块
-├── templates/               # 模板图片目录
+│   ├── engine.py            # 8状态机引擎
+│   ├── ocr.py               # OCR 文字识别
+│   ├── capture.py           # 屏幕截图
+│   ├── action.py            # 鼠标/窗口操控
+│   └── vision.py            # OpenCV 模板匹配(备用)
 └── .github/workflows/
     └── build.yml            # 自动打包工作流
 ```
