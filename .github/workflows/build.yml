@@ -46,4 +46,6 @@ jobs:
       - name: 上传到 Release
         uses: softprops/action-gh-release@v2
         with:
+          name: "jhh-ad-bot ${{ github.ref_name }}"
+          body: "自动构建 ${{ github.ref_name }}"
           files: dist/jhh-ad-bot.exe
