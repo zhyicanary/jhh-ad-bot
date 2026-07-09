@@ -46,27 +46,83 @@ if _HAS_WIN32:
     _SENDINPUT_READY = True
 
 
-def click(x: int, y: int, duration: float = 0.1, clicks: int = 2) -> None:
+def _enable_dpi_awareness() -> None:
+    """启用 DPI 感知，确保 SetCursorPos 使用与截图一致的坐标系。"""
+    if not _HAS_WIN32:
+        return
+    try:
+        # SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(
+            ctypes.c_void_p(-4)  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        )
+    except (AttributeError, OSError):
+        try:
+            # 回退: SetProcessDpiAwareness(PER_MONITOR_AWARE)
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except (AttributeError, OSError):
+            try:
+                # 最终回退: SetProcessDPIAware()
+                ctypes.windll.user32.SetProcessDPIAware()
+            except (AttributeError, OSError):
+                pass
+
+
+# 启动时立即设置 DPI 感知
+_enable_dpi_awareness()
+
+
+def _get_dpi_scale() -> float:
+    """获取当前显示器的 DPI 缩放比例（1.0 = 100%，1.5 = 150%）。"""
+    if not _HAS_WIN32:
+        return 1.0
+    try:
+        user32 = ctypes.windll.user32
+        # 获取实际 DPI
+        hdc = user32.GetDC(0)
+        dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+        user32.ReleaseDC(0, hdc)
+        return dpi / 96.0
+    except Exception:
+        return 1.0
+
+
+def _physical_to_logical(x: int, y: int) -> tuple[int, int]:
+    """将物理像素坐标（mss 截图坐标系）转换为逻辑像素坐标（SetCursorPos 坐标系）。"""
+    scale = _get_dpi_scale()
+    if scale == 1.0:
+        return x, y
+    return int(x / scale), int(y / scale)
+
+
+def click(x: int, y: int, duration: float = 0.1, clicks: int = 1) -> None:
     """使用 SendInput 模拟鼠标点击（系统级，最真实）。
 
-    先移动光标到目标位置，然后发送按下+弹起事件。
+    自动处理 DPI 缩放：截图坐标（物理像素）→ 光标坐标（逻辑像素）。
+    移动光标时模拟轨迹，避免部分应用检测瞬移忽略点击。
     非 Windows 平台回退到 pyautogui。
     """
     if _SENDINPUT_READY:
         user32 = ctypes.windll.user32
-        user32.SetCursorPos(x, y)
-        time.sleep(0.05)
 
-        for _ in range(clicks):
+        # DPI 转换：截图是物理像素，SetCursorPos 需要逻辑像素
+        lx, ly = _physical_to_logical(x, y)
+
+        # 模拟鼠标移动轨迹（从当前位置逐步移动到目标）
+        _move_with_trajectory(user32, lx, ly)
+        time.sleep(0.08)  # 等光标稳定
+
+        for i in range(clicks):
             mi = _MOUSEINPUT(0, 0, 0, _MOUSEEVENTF_LEFTDOWN, 0, None)
             inp = _INPUT(_INPUT_MOUSE, _INPUT_UNION(mi))
             user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
-            time.sleep(0.02)
+            time.sleep(0.03)
 
             mi = _MOUSEINPUT(0, 0, 0, _MOUSEEVENTF_LEFTUP, 0, None)
             inp = _INPUT(_INPUT_MOUSE, _INPUT_UNION(mi))
             user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
-            time.sleep(0.05)
+            if i < clicks - 1:
+                time.sleep(0.08)  # 多次点击之间的间隔
+        time.sleep(0.05)
         return
 
     # 非 Windows 回退
@@ -75,6 +131,37 @@ def click(x: int, y: int, duration: float = 0.1, clicks: int = 2) -> None:
     for _ in range(clicks):
         pyautogui.click()
         time.sleep(0.05)
+
+
+def _move_with_trajectory(user32, target_x: int, target_y: int) -> None:
+    """模拟鼠标从当前位置逐步移动到目标，避免瞬移被检测。"""
+    # 获取当前位置
+    point = wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(point))
+    start_x, start_y = point.x, point.y
+
+    dx = target_x - start_x
+    dy = target_y - start_y
+    distance = (dx * dx + dy * dy) ** 0.5
+
+    if distance < 3:
+        # 距离很近，直接移动
+        user32.SetCursorPos(target_x, target_y)
+        return
+
+    # 分步移动（约 10-15 步，每步 5-10ms）
+    steps = min(max(int(distance / 20), 5), 15)
+    for i in range(1, steps + 1):
+        # 使用缓动函数让移动更自然
+        t = i / steps
+        ease = 1 - (1 - t) ** 3  # ease-out cubic
+        cx = int(start_x + dx * ease)
+        cy = int(start_y + dy * ease)
+        user32.SetCursorPos(cx, cy)
+        time.sleep(0.005)
+
+    # 确保最终位置精确
+    user32.SetCursorPos(target_x, target_y)
 
 
 def set_target(keywords_str: str) -> None:

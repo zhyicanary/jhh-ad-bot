@@ -164,16 +164,59 @@ class AdBotEngine:
             x, y, conf = result
             logger.info(f"  找到广告按钮 ({x}, {y}) 置信度: {conf:.2%}")
             self._ensure_focus()
-            click(x, y)
+            click(x, y, clicks=1)
             action_wait(timing.get("post_click_delay", 1.5))
-            self.state = State.WATCHING
-            self._watch_start = time.time()
-            self._last_screen = None
-            self._still_count = 0
+
+            # 验证点击是否生效：截图检查广告按钮是否消失
+            if self._verify_click_dismissed(
+                templates.get("ad_button", "templates/ad_button.png"),
+                threshold, scale_steps, scale_range
+            ):
+                logger.info("  点击生效，进入观看状态")
+                self.state = State.WATCHING
+                self._watch_start = time.time()
+                self._last_screen = None
+                self._still_count = 0
+            else:
+                # 点击未生效，重试一次
+                logger.warning("  点击可能未生效，重试...")
+                click(x, y, clicks=1)
+                action_wait(timing.get("post_click_delay", 1.5))
+                if self._verify_click_dismissed(
+                    templates.get("ad_button", "templates/ad_button.png"),
+                    threshold, scale_steps, scale_range
+                ):
+                    logger.info("  重试点击生效")
+                    self.state = State.WATCHING
+                    self._watch_start = time.time()
+                    self._last_screen = None
+                    self._still_count = 0
+                else:
+                    logger.warning("  重试仍未生效，跳过本轮")
+                    self.stats.ad_skipped += 1
+                    action_wait(timing.get("check_interval", 2))
         else:
             logger.info("  未找到广告按钮，等待下一轮...")
             self.stats.ad_skipped += 1
             action_wait(timing.get("check_interval", 2))
+
+    def _verify_click_dismissed(
+        self, template_path: str, threshold: float,
+        scale_steps: int, scale_range: tuple
+    ) -> bool:
+        """点击后截图验证目标按钮是否消失。
+
+        Returns:
+            True 表示按钮已消失（点击生效），False 表示仍在。
+        """
+        screen = screenshot()
+        result = match_template(
+            screen, template_path,
+            threshold=threshold,
+            scale_steps=scale_steps,
+            scale_range=scale_range,
+        )
+        return result is None
 
     def _calculate_screen_diff(self, prev, curr) -> float:
         """计算两帧屏幕截图的平均像素差异（0-255）。"""
@@ -247,9 +290,33 @@ class AdBotEngine:
             x, y, text = result
             logger.info(f"  找到关闭按钮 '{text}' ({x}, {y})")
             self._ensure_focus()
-            click(x, y)
+            click(x, y, clicks=1)
             action_wait(timing.get("post_close_delay", 1.5))
-            self.state = State.CHECK_AD
+
+            # 验证关闭是否生效：再扫一次 OCR，看关闭按钮是否还在
+            screen2 = screenshot()
+            result2 = ocr.find_text(screen2, keywords, region=region)
+            if result2 is None:
+                logger.info("  广告已关闭")
+                self.state = State.CHECK_AD
+            else:
+                # 关闭按钮还在，重试一次
+                x2, y2, text2 = result2
+                logger.warning(f"  关闭按钮仍在 ({text2})，重试点击 ({x2}, {y2})")
+                click(x2, y2, clicks=1)
+                action_wait(timing.get("post_close_delay", 1.5))
+                # 二次验证
+                screen3 = screenshot()
+                result3 = ocr.find_text(screen3, keywords, region=region)
+                if result3 is None:
+                    logger.info("  重试关闭成功")
+                    self.state = State.CHECK_AD
+                else:
+                    logger.warning("  关闭按钮重试仍失败，尝试点击右上角")
+                    # 兜底：点右上角常见关闭按钮位置
+                    click(sw - 20, 10, clicks=1)
+                    action_wait(timing.get("post_close_delay", 1.5))
+                    self.state = State.CHECK_AD
         else:
             logger.info("  未找到关闭按钮，重试中...")
             action_wait(timing.get("close_retry_interval", 3))
