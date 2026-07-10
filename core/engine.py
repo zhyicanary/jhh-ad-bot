@@ -637,19 +637,15 @@ class AdBotEngine:
             action_wait(self._t_check_interval)
             return
 
-        for attempt in range(6):
+        for attempt in range(5):
             logger.info(f"[观看广告] 第{attempt + 1}次尝试...")
 
-            # 第一次尝试时多等一秒，让页面渲染完
+            # 签到后页面需要几秒加载，第一次多等一会
             if attempt == 0:
-                action_wait(1.0)
+                action_wait(2.0)
 
-            # 优先 UIA 检测（快），再 OCR 检测（慢但准）
-            has_ad = self._has_uia(self._kw_ad)
-            if not has_ad:
-                has_ad = self._has_text(self._kw_ad)
+            # 直接用 _find_and_click 查找并点击（UIA > ControlFromPoint > 坐标）
             has_close = self._has_text(self._kw_close)
-
             if has_close:
                 logger.info("  广告已开始播放（检测到关闭按钮）")
                 self.state = State.WATCHING_AD
@@ -657,37 +653,20 @@ class AdBotEngine:
                 self._ad_not_found_count = 0
                 return
 
-            if has_ad:
-                result = self._find_and_click(self._kw_ad, wait_after=self._t_ad_click)
-                if result is None:
-                    continue
+            # 直接尝试点击"观看广告"（UIA 能找到页面底部的不可见元素）
+            result = self._find_and_click(self._kw_ad, wait_after=self._t_ad_click)
+            if result is not None:
                 continue
 
-            # 策略1: 滚动查找 — "观看广告"在页面底部
-            if attempt == 0:
-                logger.info("  未找到观看广告，向下滚动查找...")
-                self._scroll_down(clicks=5)
-                continue
-
-            # 策略2: 再滚动一次
-            if attempt == 1:
-                logger.info("  仍未找到，再滚动一次...")
-                self._scroll_down(clicks=8)
-                continue
-
-            # 策略3: 导航到积分标签页
-            if attempt == 2:
-                logger.info("  滚动后仍未找到，尝试导航到积分标签...")
-                self._scroll_up(clicks=10)  # 先滚回顶部
-                nav = self._navigate_to_tab(self._kw_ad_page, wait_after=2.0)
-                if nav:
-                    continue
-                # 导航失败也继续
-
+            # 没找到，检查上限
             if self._has_text(self._kw_limit):
                 logger.info("  检测到今日上限提示，停止")
                 self.state = State.STOP
                 return
+
+            # 等待页面加载后重试
+            logger.info(f"  未找到观看广告，等待重试...")
+            action_wait(self._t_check_interval)
 
             # 只在检测到弹窗类元素时才尝试关闭（避免误关窗口）
             has_popup = (

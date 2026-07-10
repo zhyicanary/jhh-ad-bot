@@ -190,10 +190,20 @@ def find_and_invoke(hwnd: int, name: str, exact: bool = False) -> bool:
                 logger.info(f"UIA Legacy: '{elem.Name}' ({ctype})")
                 return True
 
-    # 策略3: 尝试 Click（模拟鼠标，仅对有有效 BoundingRectangle 的元素）
+    # 策略3: 尝试 Click（模拟鼠标）
+    # 对 TextControl 不使用 Click() — Chromium 不响应合成鼠标点击，
+    # Click() 会返回 True 但实际无效，导致误判成功。
+    # 让它回退到 _ocr_and_invoke (ControlFromPoint) 去找真正的按钮。
     for elem in matched:
+        ctype = ""
+        try:
+            ctype = elem.ControlTypeName
+        except Exception:
+            pass
+        if ctype == "TextControl":
+            continue  # 跳过 TextControl，让上层走 ControlFromPoint
         if _try_click(elem):
-            logger.info(f"UIA Click: '{elem.Name}' ({elem.ControlTypeName})")
+            logger.info(f"UIA Click: '{elem.Name}' ({ctype})")
             return True
 
     logger.warning(f"UIA: {len(matched)} 个匹配元素均无法调用")
