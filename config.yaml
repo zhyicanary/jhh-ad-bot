@@ -1,4 +1,4 @@
-# ===== 目标窗口 =====
+﻿# ===== 目标窗口 =====
 window:
   title_keyword: "简幻欢|WeChatAppEx|微信"  # 窗口关键词(按优先级|分隔)
   auto_focus: true                           # 每次操作前自动激活窗口
@@ -16,20 +16,24 @@ timing:
 matching:
   # 订阅提醒弹窗
   subscribe_keywords: ["订阅提醒", "好的", "不再提示", "不再提醒"]
-  # 签到
+  # 签到标签（导航到签到页面）
   checkin_keywords: ["签到"]
+  # 签到动作按钮（在签到页面上执行签到）
+  checkin_action_keywords: ["开始签到"]
+  # 积分标签（导航到积分/广告页面）
+  ad_page_keywords: ["积分"]
   # 观看广告按钮
   ad_keywords: ["观看广告", "看广告"]
   # 关闭广告按钮
   close_keywords: ["关闭", "关闭广告"]
-  # 广告中断弹窗（误点关闭导致）
-  interrupt_keywords: ["暂未获得奖励", "继续", "放弃"]
-  continue_keywords: ["继续"]
+  # 广告中断弹窗 — 只用明确的弹窗文字，避免误匹配"广告继续计时"等
+  interrupt_keywords: ["暂未获得奖励", "放弃奖励"]
+  continue_keywords: ["继续观看", "继续"]
   # 奖励提示
-  reward_keywords: ["获得观看积分", "积分成功", "观看积分"]
+  reward_keywords: ["获得观看积分", "积分成功", "观看积分", "获得积分"]
   loading_keywords: ["加载中"]
-  # 今日上限提示
-  limit_keywords: ["今日", "上限", "次数已用完", "已达上限", "已用完"]
+  # 今日上限提示（需精确匹配，避免误判）
+  limit_keywords: ["次数已用完", "已达上限", "已用完", "今日上限"]
   # 弹窗×按钮（插屏广告）
   popup_close_keywords: ["×", "X", "✕", "✖"]
   # 通用关闭弹窗按钮
