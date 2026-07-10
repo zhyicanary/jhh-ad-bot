@@ -29,14 +29,14 @@ logger = logging.getLogger(__name__)
 
 class State(Enum):
     """自动化状态。"""
-    INIT = auto()                # 初始化：激活窗口
-    DISMISS_SUBSCRIBE = auto()   # 关闭订阅提醒弹窗
-    CHECK_IN = auto()            # 签到
-    CLICK_AD = auto()            # 点击"观看广告"
-    WATCHING_AD = auto()         # 观看广告(30s)
-    CLOSE_AD = auto()            # 关闭广告
-    WAITING_REWARD = auto()      # 等待奖励
-    STOP = auto()                # 停止
+    INIT = auto()
+    DISMISS_SUBSCRIBE = auto()
+    CHECK_IN = auto()
+    CLICK_AD = auto()
+    WATCHING_AD = auto()
+    CLOSE_AD = auto()
+    WAITING_REWARD = auto()
+    STOP = auto()
 
 
 @dataclass
@@ -52,12 +52,7 @@ class Stats:
 
 
 class AdBotEngine:
-    """简幻欢广告机器人主引擎。
-
-    使用方式:
-        engine = AdBotEngine(config)
-        engine.run()
-    """
+    """简幻欢广告机器人主引擎。"""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -66,14 +61,12 @@ class AdBotEngine:
         self._stop_requested = False
         self._watch_start: float = 0.0
         self._ad_not_found_count: int = 0
-        self._win_offset: Tuple[int, int] = (0, 0)  # 窗口左上角屏幕坐标
+        self._win_offset: Tuple[int, int] = (0, 0)
 
-        # ── 窗口配置 ──
         win_cfg = config.get("window", {})
         self._win_keyword = win_cfg.get("title_keyword", "简幻欢|WeChatAppEx|微信")
         self._auto_focus = win_cfg.get("auto_focus", True)
 
-        # ── 时间配置 ──
         t = config.get("timing", {})
         self._t_init = t.get("init_wait", 3)
         self._t_ad_click = t.get("ad_click_wait", 2)
@@ -82,7 +75,6 @@ class AdBotEngine:
         self._t_close_wait = t.get("close_ad_wait", 2)
         self._t_reward_wait = t.get("reward_wait", 3)
 
-        # ── 识别关键词 ──
         m = config.get("matching", {})
         self._kw_subscribe = m.get("subscribe_keywords", ["订阅提醒", "好的", "不再提示", "不再提醒"])
         self._kw_checkin = m.get("checkin_keywords", ["签到"])
@@ -97,7 +89,6 @@ class AdBotEngine:
         self._kw_dismiss = m.get("dismiss_keywords", ["确定", "知道了", "好的"])
         self._max_ad_not_found = m.get("max_ad_not_found", 5)
 
-        # ── 循环配置 ──
         loop_cfg = config.get("loop", {})
         self._max_rounds = loop_cfg.get("max_rounds", 0)
 
@@ -106,12 +97,11 @@ class AdBotEngine:
     # ──────────────────────────────────────────────
 
     def run(self) -> Stats:
-        """启动主循环（阻塞运行）。"""
         logger.info("===== 简幻欢广告机器人启动 =====")
         self.stats.start_time = time.time()
 
         if not ocr.init():
-            logger.error("OCR 引擎初始化失败，无法运行。请安装 rapidocr-onnxruntime")
+            logger.error("OCR 引擎初始化失败，无法运行")
             self.state = State.STOP
             return self.stats
 
@@ -131,11 +121,9 @@ class AdBotEngine:
         return self.stats
 
     def stop(self) -> None:
-        """请求停止。"""
         self._stop_requested = True
 
     def _tick(self) -> None:
-        """执行一次状态机步骤。"""
         handlers = {
             State.INIT: self._handle_init,
             State.DISMISS_SUBSCRIBE: self._handle_dismiss_subscribe,
@@ -158,37 +146,29 @@ class AdBotEngine:
 
         只截取小程序窗口，不会截到其他窗口的内容。
         同时记录窗口偏移，供 _click_win 使用。
-
-        Returns:
-            窗口区域的 BGR numpy 数组。
         """
         rect = get_window_rect()
         if rect is not None:
             left, top, w, h = rect
             self._win_offset = (left, top)
-            logger.debug(f"  窗口区域: ({left}, {top}, {w}, {h})")
-            return screenshot(region=(left, top, w, h))
+            logger.info(f"  截图窗口区域: left={left} top={top} {w}x{h}")
+            img = screenshot(region=(left, top, w, h))
+            logger.debug(f"  截图尺寸: {img.shape}")
+            return img
         else:
-            # 找不到窗口，回退全屏（但不应该发生）
-            logger.warning("  未找到目标窗口，回退全屏截图")
+            # 找不到窗口，回退全屏
             self._win_offset = (0, 0)
-            return screenshot()
+            logger.warning("  未找到目标窗口! 使用全屏截图")
+            img = screenshot()
+            logger.debug(f"  全屏截图尺寸: {img.shape}")
+            return img
 
     def _click_win(self, x: int, y: int, clicks: int = 1, wait_after: float = 0) -> None:
-        """点击窗口相对坐标。
-
-        OCR 返回的坐标是相对于窗口截图的，需要加上窗口偏移
-        转换为屏幕绝对坐标后才能点击。
-
-        Args:
-            x, y: 窗口相对坐标（来自 OCR）
-            clicks: 点击次数
-            wait_after: 点击后等待秒数
-        """
+        """点击窗口相对坐标（OCR 坐标 + 窗口偏移 = 屏幕绝对坐标）。"""
         ox, oy = self._win_offset
         screen_x = ox + x
         screen_y = oy + y
-        logger.debug(f"  点击: window({x},{y}) → screen({screen_x},{screen_y})")
+        logger.info(f"  点击: window({x},{y}) → screen({screen_x},{screen_y})")
         click(screen_x, screen_y, clicks=clicks)
         if wait_after > 0:
             action_wait(wait_after)
@@ -198,11 +178,17 @@ class AdBotEngine:
     # ──────────────────────────────────────────────
 
     def _ensure_focus(self) -> None:
-        """确保窗口在前台。"""
+        """确保窗口在前台并设置 _target_hwnd。"""
         if not self._auto_focus:
+            # 即使不自动激活，也要设置 target
+            set_target(self._win_keyword)
             return
+
+        # 窗口已在前台 → 设置 target 后返回
         if is_window_in_focus(self._win_keyword):
+            set_target(self._win_keyword)
             return
+
         logger.info("窗口不在前台，尝试激活...")
         for attempt in range(5):
             focus_window(self._win_keyword)
@@ -211,22 +197,29 @@ class AdBotEngine:
                 logger.info("窗口已回到前台")
                 set_target(self._win_keyword)
                 return
-        logger.warning("窗口激活超时，强制继续")
+
+        # 激活超时，最后尝试一次 set_target
+        logger.warning("窗口激活超时，尝试设置 target...")
+        set_target(self._win_keyword)
 
     def _find_text(self, keywords: list[str], region=None) -> Optional[Tuple[int, int, str]]:
-        """OCR 查找文字（窗口截图），返回窗口相对坐标 (x, y, text) 或 None。"""
+        """OCR 查找文字（窗口截图），返回窗口相对坐标或 None。"""
         screen = self._capture()
-        return ocr.find_text(screen, keywords, region=region)
+        result = ocr.find_text(screen, keywords, region=region)
+        if result is None:
+            logger.info(f"  OCR 未匹配: {keywords}")
+        else:
+            logger.info(f"  OCR 命中: '{result[2]}' @ ({result[0]}, {result[1]})")
+        return result
 
     def _find_and_click(
         self, keywords: list[str], region=None, wait_after: float = 1.0
     ) -> Optional[Tuple[int, int, str]]:
-        """OCR 查找文字并点击，返回 (x, y, text) 或 None。"""
+        """OCR 查找文字并点击。"""
         result = self._find_text(keywords, region=region)
         if result is None:
             return None
         x, y, text = result
-        logger.info(f"  找到 '{text}' @ window({x}, {y})")
         self._ensure_focus()
         self._click_win(x, y, clicks=1, wait_after=wait_after)
         return (x, y, text)
@@ -234,7 +227,7 @@ class AdBotEngine:
     def _wait_for_text(
         self, keywords: list[str], timeout: float = 10, interval: float = 1.0, region=None
     ) -> bool:
-        """等待文字出现，返回是否找到。"""
+        """等待文字出现。"""
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self._find_text(keywords, region=region) is not None:
@@ -245,7 +238,7 @@ class AdBotEngine:
     def _wait_for_text_gone(
         self, keywords: list[str], timeout: float = 10, interval: float = 1.0, region=None
     ) -> bool:
-        """等待文字消失，返回是否消失。"""
+        """等待文字消失。"""
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self._find_text(keywords, region=region) is None:
@@ -254,18 +247,10 @@ class AdBotEngine:
         return False
 
     def _close_popup_x(self) -> bool:
-        """检测并关闭覆盖窗口的弹窗（×按钮）。
-
-        所有操作都在窗口区域内，不会点到其他窗口。
-
-        Returns:
-            True 表示尝试关闭了弹窗。
-        """
-        # 如果"观看广告"仍可见，说明没有弹窗
+        """检测并关闭覆盖窗口的弹窗（×按钮）。"""
         if self._find_text(self._kw_ad) is not None:
             return False
 
-        # 在窗口截图的上 1/3 区域找 ×
         screen = self._capture()
         sh, sw = screen.shape[:2]
         top_region = (0, 0, sw, sh // 3)
@@ -277,7 +262,6 @@ class AdBotEngine:
             self._ensure_focus()
             self._click_win(x, y, clicks=1)
         else:
-            # OCR 找不到 ×，回退到窗口右上角
             logger.info(f"  OCR未找到×，点击窗口右上角 ({sw - 30}, 15)")
             self._ensure_focus()
             self._click_win(sw - 30, 15, clicks=1)
@@ -290,23 +274,23 @@ class AdBotEngine:
     # ──────────────────────────────────────────────
 
     def _handle_init(self) -> None:
-        """初始化：激活窗口。"""
         logger.info("[INIT] 激活窗口...")
         self._ensure_focus()
         action_wait(self._t_init)
 
-        if is_window_in_focus(self._win_keyword):
-            logger.info("窗口已就绪")
+        # 验证窗口是否就绪
+        rect = get_window_rect()
+        if rect:
+            logger.info(f"窗口已就绪: {rect[2]}x{rect[3]} @ ({rect[0]}, {rect[1]})")
         else:
-            logger.warning("未找到目标窗口，请确保微信和简幻欢已打开")
+            logger.warning("未找到目标窗口! 请确保微信和简幻欢已打开")
 
         self.state = State.DISMISS_SUBSCRIBE
 
     def _handle_dismiss_subscribe(self) -> None:
-        """关闭订阅提醒弹窗（仅首次）。"""
         logger.info("[订阅提醒] 检测订阅弹窗...")
 
-        found = self._wait_for_text(self._kw_subscribe, timeout=3, interval=1.0)
+        found = self._wait_for_text(self._kw_subscribe, timeout=5, interval=1.0)
 
         if found:
             result = self._find_and_click(
@@ -315,14 +299,13 @@ class AdBotEngine:
             if result:
                 logger.info(f"  订阅弹窗已关闭 (点击了 '{result[2]}')")
             else:
-                logger.warning("  发现订阅弹窗但未能点击按钮，继续执行")
+                logger.warning("  发现订阅弹窗但未能点击按钮")
         else:
             logger.info("  未发现订阅弹窗，跳过")
 
         self.state = State.CHECK_IN
 
     def _handle_check_in(self) -> None:
-        """签到。"""
         logger.info("[签到] 查找签到按钮...")
 
         result = self._find_and_click(self._kw_checkin, wait_after=2.0)
@@ -336,14 +319,12 @@ class AdBotEngine:
         self.state = State.CLICK_AD
 
     def _handle_click_ad(self) -> None:
-        """点击"观看广告"，自动处理插屏弹窗，直到广告开始播放。"""
         for attempt in range(4):
             logger.info(f"[观看广告] 第{attempt + 1}次尝试...")
 
             has_ad = self._find_text(self._kw_ad) is not None
             has_close = self._find_text(self._kw_close) is not None
 
-            # ── 广告已开始播放 ──
             if has_close:
                 logger.info("  广告已开始播放（检测到关闭按钮）")
                 self.state = State.WATCHING_AD
@@ -351,15 +332,12 @@ class AdBotEngine:
                 self._ad_not_found_count = 0
                 return
 
-            # ── 主界面，点击"观看广告" ──
             if has_ad:
                 result = self._find_and_click(self._kw_ad, wait_after=self._t_ad_click)
                 if result is None:
-                    logger.info("  按钮消失，重新检测")
                     continue
                 continue
 
-            # ── 界面被覆盖，尝试关闭弹窗 ──
             if self._find_text(self._kw_limit):
                 logger.info("  检测到今日上限提示，停止")
                 self.state = State.STOP
@@ -382,10 +360,6 @@ class AdBotEngine:
             action_wait(self._t_check_interval)
 
     def _handle_watching_ad(self) -> None:
-        """观看广告（等待30秒）。
-
-        期间检测"暂未获得奖励"弹窗（误点关闭导致），自动点击"继续"。
-        """
         elapsed = time.time() - self._watch_start
 
         if elapsed >= self._t_ad_watch:
@@ -404,7 +378,6 @@ class AdBotEngine:
         action_wait(self._t_check_interval)
 
     def _handle_close_ad(self) -> None:
-        """关闭广告。"""
         logger.info("[关闭广告] 查找关闭按钮...")
 
         result = self._find_and_click(self._kw_close, wait_after=self._t_close_wait)
@@ -416,7 +389,6 @@ class AdBotEngine:
             self._ensure_focus()
             self._click_win(sw - 30, 15, clicks=1, wait_after=self._t_close_wait)
 
-        # 验证广告是否已关闭
         if self._find_text(self._kw_close):
             logger.warning("  关闭按钮仍在，重试")
             self._find_and_click(self._kw_close, wait_after=self._t_close_wait)
@@ -424,7 +396,6 @@ class AdBotEngine:
         self.state = State.WAITING_REWARD
 
     def _handle_waiting_reward(self) -> None:
-        """等待奖励（加载中 → 获得积分成功）。"""
         logger.info("[等待奖励] 等待加载完成...")
 
         if self._wait_for_text(self._kw_loading, timeout=5, interval=0.5):

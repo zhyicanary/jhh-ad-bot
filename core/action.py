@@ -142,18 +142,43 @@ def _move_with_trajectory(user32, target_x: int, target_y: int) -> None:
 
 
 def set_target(keywords_str: str) -> None:
-    """缓存目标窗口句柄（后续可配合窗口截图等使用）。"""
+    """缓存目标窗口句柄（后续可配合窗口截图等使用）。
+
+    查找策略：
+        1. EnumWindows 枚举所有可见窗口，匹配标题关键词
+        2. 回退: 检查当前前台窗口是否匹配（解决 EnumWindows 漏枚举问题）
+    """
     global _target_hwnd
     if not _HAS_WIN32:
         return
     keywords = [k.strip() for k in keywords_str.split("|")] if "|" in keywords_str else [keywords_str]
+
+    # 策略1: EnumWindows 枚举查找
     for kw in keywords:
         hwnd = _find_hwnd_by_keyword(kw)
         if hwnd:
             _target_hwnd = hwnd
-            logger.debug(f"目标窗口: {kw} (hwnd={hwnd})")
+            logger.info(f"目标窗口: {kw} (hwnd={hwnd})")
             return
+
+    # 策略2: 前台窗口回退（EnumWindows 可能漏枚举某些窗口）
+    try:
+        user32 = ctypes.windll.user32
+        fg_hwnd = user32.GetForegroundWindow()
+        if fg_hwnd:
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(fg_hwnd, buf, 256)
+            fg_title = buf.value
+            for kw in keywords:
+                if kw.lower() in fg_title.lower():
+                    _target_hwnd = fg_hwnd
+                    logger.info(f"目标窗口(前台回退): '{fg_title}' (hwnd={fg_hwnd})")
+                    return
+    except Exception:
+        pass
+
     _target_hwnd = None
+    logger.warning(f"set_target: 未找到目标窗口 (关键词: {keywords})，截图将使用全屏模式")
 
 
 def get_window_rect() -> tuple[int, int, int, int] | None:
