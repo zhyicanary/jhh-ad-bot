@@ -444,6 +444,41 @@ class AdBotEngine:
             action_wait(interval)
         return False
 
+    def _scroll_down(self, clicks: int = 5) -> None:
+        """在窗口中心向下滚动鼠标滚轮，查找页面底部的元素。"""
+        if not self._target_hwnd:
+            return
+        self._update_win_rect()
+        ox, oy, w, h = self._win_rect
+        cx = ox + w // 2
+        cy = oy + h // 2
+        logger.info(f"  滚动: clicks={clicks} @ screen({cx},{cy})")
+        # 移动鼠标到窗口中心再滚动
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.SetCursorPos(cx, cy)
+        action_wait(0.1)
+        import pyautogui
+        pyautogui.scroll(-clicks * 3)  # 负值=向下
+        action_wait(0.5)
+
+    def _scroll_up(self, clicks: int = 5) -> None:
+        """在窗口中心向上滚动鼠标滚轮。"""
+        if not self._target_hwnd:
+            return
+        self._update_win_rect()
+        ox, oy, w, h = self._win_rect
+        cx = ox + w // 2
+        cy = oy + h // 2
+        logger.info(f"  向上滚动: clicks={clicks} @ screen({cx},{cy})")
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.SetCursorPos(cx, cy)
+        action_wait(0.1)
+        import pyautogui
+        pyautogui.scroll(clicks * 3)  # 正值=向上
+        action_wait(0.5)
+
     def _close_popup_x(self) -> bool:
         """关闭插屏弹窗的×按钮。
 
@@ -503,9 +538,17 @@ class AdBotEngine:
         logger.info("[INIT] 激活窗口...")
         self._target_hwnd = self._find_target_hwnd()
         if self._target_hwnd:
+            # 先检查窗口是否最小化（-32000 表示最小化）
+            self._update_win_rect()
+            if self._win_rect[0] <= -32000:
+                logger.info("  窗口已最小化，先还原...")
+                import ctypes
+                ctypes.windll.user32.ShowWindow(wintypes.HWND(self._target_hwnd), 9)  # SW_RESTORE
+                action_wait(1.0)
+            # 激活窗口后再更新 rect（激活前坐标可能不正确）
+            self._ensure_focus()
             self._update_win_rect()
             logger.info(f"  目标窗口: hwnd={self._target_hwnd} rect={self._win_rect}")
-            self._ensure_focus()
             action_wait(self._t_init)
             self.state = State.DISMISS_SUBSCRIBE
         else:
@@ -564,7 +607,7 @@ class AdBotEngine:
             action_wait(self._t_check_interval)
             return
 
-        for attempt in range(4):
+        for attempt in range(5):
             logger.info(f"[观看广告] 第{attempt + 1}次尝试...")
 
             # 检测状态（UIA + OCR 双重检测）
@@ -584,13 +627,26 @@ class AdBotEngine:
                     continue
                 continue
 
-            # 第一次未找到时，尝试导航到积分标签页
+            # 策略1: 滚动查找 — "观看广告"可能在页面底部
             if attempt == 0:
-                logger.info("  未找到观看广告，尝试导航到积分标签...")
+                logger.info("  未找到观看广告，向下滚动查找...")
+                self._scroll_down(clicks=5)
+                continue
+
+            # 策略2: 再滚动一次
+            if attempt == 1:
+                logger.info("  仍未找到，再滚动一次...")
+                self._scroll_down(clicks=8)
+                continue
+
+            # 策略3: 导航到积分标签页
+            if attempt == 2:
+                logger.info("  滚动后仍未找到，尝试导航到积分标签...")
+                self._scroll_up(clicks=10)  # 先滚回顶部
                 nav = self._navigate_to_tab(self._kw_ad_page, wait_after=2.0)
                 if nav:
-                    continue  # 导航成功，重试查找
-                # 导航失败，可能已在正确页面但没有观看广告按钮
+                    continue
+                # 导航失败也继续
 
             if self._has_text(self._kw_limit):
                 logger.info("  检测到今日上限提示，停止")
