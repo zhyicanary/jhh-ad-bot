@@ -1,4 +1,4 @@
-"""OCR 文字识别模块
+﻿"""OCR 文字识别模块
 
 使用 RapidOCR（基于 ONNX Runtime），离线运行，准确率高。
 模型文件自动内置于 rapidocr_onnxruntime 包中，无需额外下载。
@@ -117,17 +117,30 @@ def find_text(
     if not boxes or not txts:
         return None
 
+    # 第一轮：精确匹配（优先）
+    for box, text in zip(boxes, txts):
+        if not text or not isinstance(text, str):
+            continue
+        for target in targets:
+            if text.strip() == target:
+                x1, y1 = box[0]
+                x3, y3 = box[2]
+                cx = int((x1 + x3) / 2) + region_ox
+                cy = int((y1 + y3) / 2) + region_oy
+                logger.info(f"OCR 命中 '{target}' (精确: '{text}') @ ({cx}, {cy})")
+                return (cx, cy, target)
+
+    # 第二轮：子串匹配（兜底）
     for box, text in zip(boxes, txts):
         if not text or not isinstance(text, str):
             continue
         for target in targets:
             if target in text:
-                # box: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
                 x1, y1 = box[0]
                 x3, y3 = box[2]
                 cx = int((x1 + x3) / 2) + region_ox
                 cy = int((y1 + y3) / 2) + region_oy
-                logger.info(f"OCR 命中 '{target}' (实际: '{text}') @ ({cx}, {cy})")
+                logger.info(f"OCR 命中 '{target}' (子串: '{text}') @ ({cx}, {cy})")
                 return (cx, cy, target)
 
     return None
