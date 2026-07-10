@@ -75,10 +75,8 @@ def _setup_argtypes():
     ]
     gdi32.BitBlt.restype = wintypes.BOOL
 
-    gdi32.GetDIBits.argtypes = [
-        wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
-        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), wintypes.UINT,
-    ]
+    # GetDIBits: 不设置 argtypes，让 ctypes 自动转换
+    # （第6参数是 LPBITMAPINFO，传 byref(BITMAPINFOHEADER) 时自动转换最可靠）
     gdi32.GetDIBits.restype = ctypes.c_int
 
     gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
