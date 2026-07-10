@@ -605,25 +605,19 @@ class AdBotEngine:
         self.state = State.CHECK_IN
 
     def _handle_check_in(self) -> None:
-        logger.info("[签到] 开始签到流程...")
+        """点击"签到"标签导航到签到页面。
 
-        # 先尝试直接点击"开始签到"（可能已在签到页面）
-        result = self._find_and_click(self._kw_checkin_action, wait_after=2.0)
-        if result is None:
-            # 不在签到页面，先点击"签到"标签导航过去
-            logger.info("  未找到签到按钮，尝试点击签到标签...")
-            nav_result = self._navigate_to_tab(self._kw_checkin, wait_after=2.0)
-            if nav_result is not None:
-                action_wait(1.0)
-                # 在签到页面了，点击"开始签到"
-                result = self._find_and_click(self._kw_checkin_action, wait_after=2.0)
-
-        if result is not None:
-            logger.info(f"  签到完成 (点击了 '{result[2]}')")
-            # 等待页面稳定，不主动搜索弹窗（避免误触签到常见问题等链接）
-            action_wait(2.0)
+        注意：只点"签到"标签导航，不点"开始签到"。
+        签到页面上同时有"开始签到"、"签到常见问题"、"观看广告"，
+        点"开始签到"可能导致页面跳转，误触"签到常见问题"。
+        """
+        logger.info("[签到] 点击签到标签导航到签到页面...")
+        nav_result = self._navigate_to_tab(self._kw_checkin, wait_after=2.0)
+        if nav_result is not None:
+            logger.info(f"  已导航到签到页面 (点击了 '{nav_result}')")
         else:
-            logger.info("  未找到签到按钮，可能已签到或不可用")
+            logger.info("  未找到签到标签，可能已在签到页面")
+        action_wait(1.0)
         self.state = State.CLICK_AD
 
     def _handle_click_ad(self) -> None:
@@ -685,6 +679,12 @@ class AdBotEngine:
             action_wait(self._t_check_interval)
 
     def _handle_watching_ad(self) -> None:
+        """观看广告中，处理中断弹窗。
+
+        广告播放30s期间，如果不小心点了关闭按钮，会弹出弹窗：
+        "暂未获得奖励"（或类似文字），有两个选项：放弃 / 继续。
+        点击"继续"继续观看。即使误点了"放弃"，也继续循环。
+        """
         elapsed = time.time() - self._watch_start
         if elapsed >= self._t_ad_watch:
             logger.info(f"  广告观看完成 ({elapsed:.0f}s)")
@@ -693,12 +693,17 @@ class AdBotEngine:
             return
         remain = int(self._t_ad_watch - elapsed)
         logger.info(f"  广告播放中... 剩余 {remain}s")
+        # 检测中断弹窗（不小心点了关闭）
         if self._has_text(self._kw_interrupt):
             logger.warning("  检测到'暂未获得奖励'弹窗，点击'继续'")
-            self._find_and_click(self._kw_continue, wait_after=1.0)
+            result = self._find_and_click(self._kw_continue, wait_after=1.0)
+            if result is None:
+                # "继续"没找到，可能弹窗只有"放弃" — 不点击，继续等待
+                logger.warning("  未找到'继续'按钮，不点击'放弃'，继续等待")
         action_wait(self._t_check_interval)
 
     def _handle_close_ad(self) -> None:
+        """关闭广告（30s观看完成后正常关闭）。"""
         logger.info("[关闭广告] 查找关闭按钮...")
         result = self._find_and_click(self._kw_close, wait_after=self._t_close_wait)
         if result is None:
@@ -710,16 +715,23 @@ class AdBotEngine:
         self.state = State.WAITING_REWARD
 
     def _handle_waiting_reward(self) -> None:
+        """等待奖励冒泡文字（加载中 → 获得签到奖励）。
+
+        广告正常关闭后，会出现"加载中"冒泡，然后显示"获得签到奖励"，
+        耗时几秒，不碍事，等它消失后继续循环。
+        """
         logger.info("[等待奖励] 等待加载完成...")
+        # 等"加载中"出现并消失
         if self._wait_for_text(self._kw_loading, timeout=5, interval=0.5):
             logger.info("  加载中...")
             self._wait_for_text_gone(self._kw_loading, timeout=15, interval=0.5)
             logger.info("  加载完成")
+        # 等"获得签到奖励"出现
         if self._wait_for_text(self._kw_reward, timeout=8, interval=1.0):
-            logger.info("  ★ 获得观看积分！")
+            logger.info("  ★ 获得签到奖励！")
             action_wait(2)
         else:
-            logger.info("  未检测到积分提示，继续循环")
+            logger.info("  未检测到奖励提示，继续循环")
         self.stats.rounds += 1
         logger.info(f"  本轮完成 (第{self.stats.rounds}轮)")
         self.state = State.CLICK_AD
