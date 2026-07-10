@@ -606,7 +606,7 @@ class AdBotEngine:
                 logger.warning("  发现订阅弹窗但未能点击按钮")
         else:
             logger.info("  未发现订阅弹窗，跳过")
-        self.state = State.CHECK_IN
+        self.state = State.CLICK_AD
 
     def _handle_check_in(self) -> None:
         logger.info("[签到] 开始签到流程...")
