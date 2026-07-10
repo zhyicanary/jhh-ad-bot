@@ -567,7 +567,8 @@ class AdBotEngine:
 
     def _handle_dismiss_subscribe(self) -> None:
         logger.info("[订阅提醒] 检测订阅弹窗...")
-        found = self._wait_for_text(self._kw_subscribe, timeout=5, interval=1.0)
+        # 只检测 3 秒（不是 5 秒），快速跳过
+        found = self._wait_for_text(self._kw_subscribe, timeout=3, interval=1.0)
         if found:
             result = self._find_and_click(["好的", "不再提示", "不再提醒"], wait_after=2.0)
             if result:
@@ -594,8 +595,8 @@ class AdBotEngine:
 
         if result is not None:
             logger.info(f"  签到完成 (点击了 '{result[2]}')")
-            action_wait(1.0)
-            self._find_and_click(self._kw_dismiss, wait_after=1.0)
+            # 等待页面稳定，不主动搜索弹窗（避免误触签到常见问题等链接）
+            action_wait(2.0)
         else:
             logger.info("  未找到签到按钮，可能已签到或不可用")
         self.state = State.CLICK_AD
@@ -607,11 +608,17 @@ class AdBotEngine:
             action_wait(self._t_check_interval)
             return
 
-        for attempt in range(5):
+        for attempt in range(6):
             logger.info(f"[观看广告] 第{attempt + 1}次尝试...")
 
-            # 检测状态（UIA + OCR 双重检测）
-            has_ad = self._has_uia(self._kw_ad) or self._has_text(self._kw_ad)
+            # 第一次尝试时多等一秒，让页面渲染完
+            if attempt == 0:
+                action_wait(1.0)
+
+            # 优先 UIA 检测（快），再 OCR 检测（慢但准）
+            has_ad = self._has_uia(self._kw_ad)
+            if not has_ad:
+                has_ad = self._has_text(self._kw_ad)
             has_close = self._has_text(self._kw_close)
 
             if has_close:
@@ -627,7 +634,7 @@ class AdBotEngine:
                     continue
                 continue
 
-            # 策略1: 滚动查找 — "观看广告"可能在页面底部
+            # 策略1: 滚动查找 — "观看广告"在页面底部
             if attempt == 0:
                 logger.info("  未找到观看广告，向下滚动查找...")
                 self._scroll_down(clicks=5)
