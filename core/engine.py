@@ -722,19 +722,18 @@ class AdBotEngine:
     def _handle_waiting_reward(self) -> None:
         """等待奖励冒泡文字（加载中 → 获得签到奖励）。
 
-        广告正常关闭后，会出现"加载中"冒泡，然后显示"获得签到奖励"，
-        耗时几秒，不碍事，等它消失后继续循环。
+        冒泡文字总共就1-2秒，快速检测后直接继续循环。
         """
         logger.info("[等待奖励] 等待加载完成...")
-        # 等"加载中"出现并消失
-        if self._wait_for_text(self._kw_loading, timeout=5, interval=0.5):
+        # 等"加载中"出现（最多2秒）
+        if self._wait_for_text(self._kw_loading, timeout=2, interval=0.5):
             logger.info("  加载中...")
-            self._wait_for_text_gone(self._kw_loading, timeout=15, interval=0.5)
+            self._wait_for_text_gone(self._kw_loading, timeout=3, interval=0.5)
             logger.info("  加载完成")
-        # 等"获得签到奖励"出现
-        if self._wait_for_text(self._kw_reward, timeout=8, interval=1.0):
+        # 等"获得签到奖励"出现（最多3秒）
+        if self._wait_for_text(self._kw_reward, timeout=3, interval=0.5):
             logger.info("  ★ 获得签到奖励！")
-            action_wait(2)
+            action_wait(1)
         else:
             logger.info("  未检测到奖励提示，继续循环")
         self.stats.rounds += 1
