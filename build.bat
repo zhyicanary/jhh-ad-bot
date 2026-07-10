@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 echo ========================================
 echo  jhh-ad-bot Windows 打包脚本
@@ -19,22 +19,30 @@ if %errorlevel% neq 0 (
 echo [2/3] 清理旧构建...
 if exist dist rmdir /s /q dist
 if exist build rmdir /s /q build
+if exist jhh-ad-bot.spec del /q jhh-ad-bot.spec
 
 :: 打包
-echo [3/3] 正在打包...
+echo [3/3] 正在打包（可能需要 3-5 分钟）...
 pyinstaller --onefile ^
     --name "jhh-ad-bot" ^
+    --uac-admin ^
     --add-data "config.yaml;." ^
     --collect-all cv2 ^
     --collect-all pyautogui ^
     --collect-all rapidocr_onnxruntime ^
+    --collect-all uiautomation ^
+    --collect-all comtypes ^
+    --collect-all pystray ^
     --hidden-import pygetwindow ^
     --hidden-import yaml ^
+    --hidden-import PIL.Image ^
+    --hidden-import PIL.ImageDraw ^
     --hidden-import core.action ^
     --hidden-import core.capture ^
-    --hidden-import core.vision ^
     --hidden-import core.ocr ^
     --hidden-import core.engine ^
+    --hidden-import core.uia ^
+    --hidden-import tray ^
     main.py
 
 echo.
@@ -48,6 +56,7 @@ if %errorlevel% equ 0 (
     echo   2. 在同目录放 config.yaml
     echo   3. 打开微信进入简幻欢小程序
     echo   4. 双击 jhh-ad-bot.exe 运行
+    echo      （默认 CLI 模式，加 --tray 参数为托盘模式）
     echo ========================================
 ) else (
     echo ========================================
