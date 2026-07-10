@@ -1,19 +1,123 @@
-"""截图模块 - 跨平台屏幕截图
+"""截图模块 v2 - 支持窗口专属截图
 
-使用 mss 实现高性能截图，兼容 Linux / Windows / macOS。
+使用 Win32 PrintWindow API 直接截取窗口内容，
+即使窗口被其他窗口遮挡也能获取正确图像。
+
+在非 Windows 平台回退到 mss 全屏截图。
 """
 
 from typing import Tuple, Optional
+import platform
 import numpy as np
-import mss
-import mss.tools
+
+# Windows 专用
+_HAS_WIN32 = platform.system() == "Windows"
+if _HAS_WIN32:
+    import ctypes
+    from ctypes import wintypes
+
+
+def _enable_dpi_awareness() -> None:
+    """启用 DPI 感知。"""
+    if not _HAS_WIN32:
+        return
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except (AttributeError, OSError):
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except (AttributeError, OSError):
+                pass
+
+
+_enable_dpi_awareness()
+
+
+def capture_window(hwnd: int) -> Optional[np.ndarray]:
+    """使用 PrintWindow 截取指定窗口的内容。
+
+    即使窗口被遮挡也能获取正确图像。
+
+    Args:
+        hwnd: 窗口句柄
+
+    Returns:
+        BGR numpy 数组，或 None（失败时）
+    """
+    if not _HAS_WIN32 or not hwnd:
+        return None
+
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+
+    # 获取窗口尺寸
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+
+    if width <= 0 or height <= 0:
+        return None
+
+    # 创建设备上下文
+    hwnd_dc = user32.GetWindowDC(hwnd)
+    mfc_dc = ctypes.c_void_p(gdi32.CreateCompatibleDC(hwnd_dc))
+    bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
+    gdi32.SelectObject(mfc_dc, bitmap)
+
+    # PrintWindow: PW_RENDERFULLCONTENT = 2 (支持渲染完整内容)
+    result = user32.PrintWindow(hwnd, mfc_dc, 2)
+
+    if result != 1:
+        # 回退: PW_CLIENTONLY = 0
+        result = user32.PrintWindow(hwnd, mfc_dc, 0)
+
+    if result != 1:
+        # PrintWindow 失败，回退到 BitBlt
+        gdi32.BitBlt(mfc_dc, 0, 0, width, height, hwnd_dc, 0, 0, 0x00CC0020)  # SRCCOPY
+
+    # 读取位图数据
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.UINT),
+            ("biWidth", wintypes.LONG),
+            ("biHeight", wintypes.LONG),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.UINT),
+            ("biSizeImage", wintypes.UINT),
+            ("biXPelsPerMeter", wintypes.LONG),
+            ("biYPelsPerMeter", wintypes.LONG),
+            ("biClrUsed", wintypes.UINT),
+            ("biClrImportant", wintypes.UINT),
+        ]
+
+    bi = BITMAPINFOHEADER()
+    bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bi.biWidth = width
+    bi.biHeight = -height  # 负值 = top-down
+    bi.biPlanes = 1
+    bi.biBitCount = 32
+    bi.biCompression = 0  # BI_RGB
+
+    buf = ctypes.create_string_buffer(width * height * 4)
+    gdi32.GetDIBits(mfc_dc, bitmap, 0, height, buf, ctypes.byref(bi), 0)
+
+    # 清理资源
+    gdi32.DeleteObject(bitmap)
+    gdi32.DeleteDC(mfc_dc)
+    user32.ReleaseDC(hwnd, hwnd_dc)
+
+    # 转换为 numpy 数组
+    arr = np.frombuffer(buf.raw, dtype=np.uint8).reshape((height, width, 4))
+    return arr[:, :, :3]  # BGRA → BGR
 
 
 def screenshot(region: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:
     """截取屏幕指定区域，返回 BGR 格式的 numpy 数组。
-
-    在 Windows 上自动启用 DPI 感知，确保截图分辨率与屏幕物理像素一致，
-    使模板匹配坐标与 SetCursorPos 坐标系对齐。
 
     Args:
         region: (left, top, width, height)，None 表示全屏。
@@ -21,38 +125,22 @@ def screenshot(region: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray
     Returns:
         shape (H, W, 3) 的 BGR numpy 数组。
     """
-    # 确保 DPI 感知已启用（与 action.py 保持一致）
-    import platform
-    if platform.system() == "Windows":
-        import ctypes
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except (AttributeError, OSError):
-            pass
+    import mss
 
     with mss.mss() as sct:
         if region is not None:
             left, top, width, height = region
             monitor = {"top": top, "left": left, "width": width, "height": height}
         else:
-            # monitors[1] 是主显示器（monitors[0] 是虚拟全屏）
             monitor = sct.monitors[1]
 
         img = sct.grab(monitor)
-        # mss 返回 BGRA，转为 numpy 后去掉 alpha 通道
         arr = np.array(img)
         return arr[:, :, :3]  # BGR
 
 
 def screenshot_gray(region: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:
-    """截取屏幕并转为灰度图。
-
-    Args:
-        region: (left, top, width, height)，None 表示全屏。
-
-    Returns:
-        shape (H, W) 的单通道灰度 numpy 数组。
-    """
+    """截取屏幕并转为灰度图。"""
     bgr = screenshot(region)
     import cv2
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)

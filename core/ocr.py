@@ -33,6 +33,45 @@ def init() -> bool:
     return False
 
 
+def _parse_result(result):
+    """解析 RapidOCR 返回值，统一为 (boxes, txts) 格式。
+
+    RapidOCR 不同版本返回格式不同：
+    - namedtuple: result.boxes / result.txts / result.scores
+    - tuple: result[0] = [[box, text, score], ...], result[1] = [elapse, ...]
+    """
+    if result is None:
+        return [], []
+
+    # 方式1: namedtuple 属性访问
+    try:
+        boxes = result.boxes
+        txts = result.txts
+        if boxes is not None and txts is not None:
+            return boxes, txts
+    except AttributeError:
+        pass
+
+    # 方式2: tuple 格式
+    # result[0] = [[[[x1,y1],[x2,y2],[x3,y3],[x4,y4]], 'text', score], ...]
+    # result[1] = [elapse_total, elapse_det, ...]
+    if isinstance(result, tuple) and len(result) >= 1:
+        raw_list = result[0]
+        if raw_list is None:
+            return [], []
+
+        boxes = []
+        txts = []
+        for item in raw_list:
+            # item = [[[x1,y1],...], 'text', score]
+            if len(item) >= 2:
+                boxes.append(item[0])  # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+                txts.append(item[1])   # 'text'
+        return boxes, txts
+
+    return [], []
+
+
 def find_text(
     screen_bgr,
     targets: list[str],
@@ -55,7 +94,7 @@ def find_text(
         logger.debug("RapidOCR 不可用")
         return None
 
-    _ = lang  # RapidOCR 默认中英混合，不区分语言参数
+    _ = lang
 
     region_ox = 0
     region_oy = 0
@@ -73,19 +112,9 @@ def find_text(
         logger.debug(f"RapidOCR 识别异常: {e}")
         return None
 
-    if result is None:
-        return None
+    boxes, txts = _parse_result(result)
 
-    # RapidOCR 返回 named tuple: boxes, txts, scores, ...
-    # 优先用 attribute 访问，更可靠
-    try:
-        boxes = result.boxes
-        txts = result.txts
-    except AttributeError:
-        # 纯 tuple 回退
-        boxes, txts = result[0], result[1]
-
-    if boxes is None or txts is None or len(boxes) == 0:
+    if not boxes or not txts:
         return None
 
     for box, text in zip(boxes, txts):
@@ -98,7 +127,7 @@ def find_text(
                 x3, y3 = box[2]
                 cx = int((x1 + x3) / 2) + region_ox
                 cy = int((y1 + y3) / 2) + region_oy
-                logger.debug(f"RapidOCR 命中 '{target}' (实际: '{text}') @ ({cx}, {cy})")
+                logger.info(f"OCR 命中 '{target}' (实际: '{text}') @ ({cx}, {cy})")
                 return (cx, cy, target)
 
     return None
