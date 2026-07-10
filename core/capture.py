@@ -1,4 +1,4 @@
-"""截图模块 v2 - 支持窗口专属截图
+﻿"""截图模块 v2 - 支持窗口专属截图
 
 使用 Win32 PrintWindow API 直接截取窗口内容，
 即使窗口被其他窗口遮挡也能获取正确图像。
@@ -36,6 +36,61 @@ def _enable_dpi_awareness() -> None:
 _enable_dpi_awareness()
 
 
+def _setup_argtypes():
+    """设置 Win32 API 函数的参数类型，避免 64 位 HWND 溢出。
+
+    ctypes 默认把整数参数当 c_int（32 位），但 64 位 Windows 的 HWND
+    是 64 位指针，值可能超过 32 位整数范围导致 OverflowError。
+    """
+    if not _HAS_WIN32:
+        return
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+
+    # HWND 参数必须是 wintypes.HWND (c_void_p 在 64 位上是 8 字节)
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+
+    user32.GetWindowDC.argtypes = [wintypes.HWND]
+    user32.GetWindowDC.restype = wintypes.HDC
+
+    user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+    user32.PrintWindow.restype = wintypes.BOOL
+
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    user32.ReleaseDC.restype = ctypes.c_int
+
+    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+
+    gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+    gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+
+    gdi32.BitBlt.argtypes = [
+        wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
+    ]
+    gdi32.BitBlt.restype = wintypes.BOOL
+
+    gdi32.GetDIBits.argtypes = [
+        wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), wintypes.UINT,
+    ]
+    gdi32.GetDIBits.restype = ctypes.c_int
+
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    gdi32.DeleteDC.restype = wintypes.BOOL
+
+
+_setup_argtypes()
+
+
 def capture_window(hwnd: int) -> Optional[np.ndarray]:
     """使用 PrintWindow 截取指定窗口的内容。
 
@@ -55,7 +110,9 @@ def capture_window(hwnd: int) -> Optional[np.ndarray]:
 
     # 获取窗口尺寸
     rect = wintypes.RECT()
-    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    if not user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
+        return None
+
     width = rect.right - rect.left
     height = rect.bottom - rect.top
 
@@ -63,17 +120,20 @@ def capture_window(hwnd: int) -> Optional[np.ndarray]:
         return None
 
     # 创建设备上下文
-    hwnd_dc = user32.GetWindowDC(hwnd)
-    mfc_dc = ctypes.c_void_p(gdi32.CreateCompatibleDC(hwnd_dc))
+    hwnd_dc = user32.GetWindowDC(wintypes.HWND(hwnd))
+    if not hwnd_dc:
+        return None
+
+    mfc_dc = gdi32.CreateCompatibleDC(hwnd_dc)
     bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
     gdi32.SelectObject(mfc_dc, bitmap)
 
     # PrintWindow: PW_RENDERFULLCONTENT = 2 (支持渲染完整内容)
-    result = user32.PrintWindow(hwnd, mfc_dc, 2)
+    result = user32.PrintWindow(wintypes.HWND(hwnd), mfc_dc, 2)
 
     if result != 1:
         # 回退: PW_CLIENTONLY = 0
-        result = user32.PrintWindow(hwnd, mfc_dc, 0)
+        result = user32.PrintWindow(wintypes.HWND(hwnd), mfc_dc, 0)
 
     if result != 1:
         # PrintWindow 失败，回退到 BitBlt
@@ -109,7 +169,7 @@ def capture_window(hwnd: int) -> Optional[np.ndarray]:
     # 清理资源
     gdi32.DeleteObject(bitmap)
     gdi32.DeleteDC(mfc_dc)
-    user32.ReleaseDC(hwnd, hwnd_dc)
+    user32.ReleaseDC(wintypes.HWND(hwnd), hwnd_dc)
 
     # 转换为 numpy 数组
     arr = np.frombuffer(buf.raw, dtype=np.uint8).reshape((height, width, 4))

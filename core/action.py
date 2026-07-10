@@ -1,4 +1,4 @@
-"""动作执行模块 - 键鼠操控与窗口管理
+﻿"""动作执行模块 - 键鼠操控与窗口管理
 
 跨平台实现：pyautogui (键鼠) + 窗口管理。
 """
@@ -20,7 +20,6 @@ _target_hwnd: int | None = None
 _HAS_WIN32 = platform.system() == "Windows" and hasattr(ctypes, "windll")
 
 # ── Win32 SendInput 鼠标点击 ──
-# 系统级输入模拟（SRA 方案），真实度最高
 _SENDINPUT_READY = False
 if _HAS_WIN32:
     _INPUT_MOUSE = 0
@@ -48,29 +47,62 @@ if _HAS_WIN32:
 
     _SENDINPUT_READY = True
 
+    # 设置 Win32 API 参数类型，避免 64 位 HWND 溢出
+    _user32 = ctypes.windll.user32
+    _user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    _user32.GetWindowRect.restype = wintypes.BOOL
+    _user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    _user32.IsWindowVisible.restype = wintypes.BOOL
+    _user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    _user32.GetWindowTextLengthW.restype = ctypes.c_int
+    _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _user32.GetWindowTextW.restype = ctypes.c_int
+    _user32.GetForegroundWindow.argtypes = []
+    _user32.GetForegroundWindow.restype = wintypes.HWND
+    _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    _user32.SetForegroundWindow.restype = wintypes.BOOL
+    _user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    _user32.ShowWindow.restype = wintypes.BOOL
+    _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    _user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+    _user32.AttachThreadInput.restype = wintypes.BOOL
+    _user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.UINT,
+    ]
+    _user32.SetWindowPos.restype = wintypes.BOOL
+    _user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    _user32.GetCursorPos.restype = wintypes.BOOL
+    _user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+    _user32.SetCursorPos.restype = wintypes.BOOL
+    _user32.SendInput.argtypes = [wintypes.UINT, ctypes.c_void_p, ctypes.c_int]
+    _user32.SendInput.restype = wintypes.UINT
+    _user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_void_p]
+    _user32.keybd_event.restype = None
+    _user32.EnumWindows.argtypes = [ctypes.c_void_p, wintypes.LPARAM]
+    _user32.EnumWindows.restype = wintypes.BOOL
+
 
 def _enable_dpi_awareness() -> None:
     """启用 DPI 感知，确保 SetCursorPos 使用与截图一致的坐标系。"""
     if not _HAS_WIN32:
         return
     try:
-        # SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
         ctypes.windll.user32.SetProcessDpiAwarenessContext(
-            ctypes.c_void_p(-4)  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+            ctypes.c_void_p(-4)
         )
     except (AttributeError, OSError):
         try:
-            # 回退: SetProcessDpiAwareness(PER_MONITOR_AWARE)
             ctypes.windll.shcore.SetProcessDpiAwareness(2)
         except (AttributeError, OSError):
             try:
-                # 最终回退: SetProcessDPIAware()
                 ctypes.windll.user32.SetProcessDPIAware()
             except (AttributeError, OSError):
                 pass
 
 
-# 启动时立即设置 DPI 感知
 _enable_dpi_awareness()
 
 
@@ -84,9 +116,8 @@ def click(x: int, y: int, duration: float = 0.1, clicks: int = 1) -> None:
     if _SENDINPUT_READY:
         user32 = ctypes.windll.user32
 
-        # DPI 感知已启用，截图坐标与 SetCursorPos 坐标系一致（均为物理像素）
         _move_with_trajectory(user32, x, y)
-        time.sleep(0.08)  # 等光标稳定
+        time.sleep(0.08)
 
         for i in range(clicks):
             mi = _MOUSEINPUT(0, 0, 0, _MOUSEEVENTF_LEFTDOWN, 0, None)
@@ -98,11 +129,10 @@ def click(x: int, y: int, duration: float = 0.1, clicks: int = 1) -> None:
             inp = _INPUT(_INPUT_MOUSE, _INPUT_UNION(mi))
             user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
             if i < clicks - 1:
-                time.sleep(0.08)  # 多次点击之间的间隔
+                time.sleep(0.08)
         time.sleep(0.05)
         return
 
-    # 非 Windows 回退
     import pyautogui
     pyautogui.moveTo(x, y, duration=duration)
     for _ in range(clicks):
@@ -112,7 +142,6 @@ def click(x: int, y: int, duration: float = 0.1, clicks: int = 1) -> None:
 
 def _move_with_trajectory(user32, target_x: int, target_y: int) -> None:
     """模拟鼠标从当前位置逐步移动到目标，避免瞬移被检测。"""
-    # 获取当前位置
     point = wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(point))
     start_x, start_y = point.x, point.y
@@ -122,38 +151,28 @@ def _move_with_trajectory(user32, target_x: int, target_y: int) -> None:
     distance = (dx * dx + dy * dy) ** 0.5
 
     if distance < 3:
-        # 距离很近，直接移动
         user32.SetCursorPos(target_x, target_y)
         return
 
-    # 分步移动（约 10-15 步，每步 5-10ms）
     steps = min(max(int(distance / 20), 5), 15)
     for i in range(1, steps + 1):
-        # 使用缓动函数让移动更自然
         t = i / steps
-        ease = 1 - (1 - t) ** 3  # ease-out cubic
+        ease = 1 - (1 - t) ** 3
         cx = int(start_x + dx * ease)
         cy = int(start_y + dy * ease)
         user32.SetCursorPos(cx, cy)
         time.sleep(0.005)
 
-    # 确保最终位置精确
     user32.SetCursorPos(target_x, target_y)
 
 
 def set_target(keywords_str: str) -> None:
-    """缓存目标窗口句柄（后续可配合窗口截图等使用）。
-
-    查找策略：
-        1. EnumWindows 枚举所有可见窗口，匹配标题关键词
-        2. 回退: 检查当前前台窗口是否匹配（解决 EnumWindows 漏枚举问题）
-    """
+    """缓存目标窗口句柄。"""
     global _target_hwnd
     if not _HAS_WIN32:
         return
     keywords = [k.strip() for k in keywords_str.split("|")] if "|" in keywords_str else [keywords_str]
 
-    # 策略1: EnumWindows 枚举查找
     for kw in keywords:
         hwnd = _find_hwnd_by_keyword(kw)
         if hwnd:
@@ -161,7 +180,6 @@ def set_target(keywords_str: str) -> None:
             logger.info(f"目标窗口: {kw} (hwnd={hwnd})")
             return
 
-    # 策略2: 前台窗口回退（EnumWindows 可能漏枚举某些窗口）
     try:
         user32 = ctypes.windll.user32
         fg_hwnd = user32.GetForegroundWindow()
@@ -182,42 +200,30 @@ def set_target(keywords_str: str) -> None:
 
 
 def get_window_rect() -> tuple[int, int, int, int] | None:
-    """获取目标窗口的区域。
-
-    Returns:
-        (left, top, width, height) 屏幕绝对坐标，或 None（无目标窗口）。
-    """
+    """获取目标窗口的区域。"""
     if not _HAS_WIN32 or _target_hwnd is None:
         return None
     try:
         rect = wintypes.RECT()
-        ctypes.windll.user32.GetWindowRect(_target_hwnd, ctypes.byref(rect))
+        ctypes.windll.user32.GetWindowRect(wintypes.HWND(_target_hwnd), ctypes.byref(rect))
         return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
     except Exception:
         return None
 
+
 def scroll(x: int, y: int, clicks: int = -3) -> None:
-    """在 (x, y) 位置滚动鼠标滚轮。负值向下滚动。"""
+    """在 (x, y) 位置滚动鼠标滚轮。"""
     import pyautogui
     pyautogui.moveTo(x, y, duration=0.05)
     pyautogui.scroll(clicks)
 
 
 def wait(seconds: float) -> None:
-    """等待指定秒数。"""
     time.sleep(seconds)
 
 
 def focus_window(title_keyword: str) -> bool:
-    """尝试激活标题包含关键词的窗口。
-
-    支持按优先级匹配多个关键词（用 | 分隔），
-    如 "简幻欢|微信" 会先找简幻欢，找不到再找微信。
-
-    Returns:
-        是否成功找到并激活窗口。
-    """
-    # 拆分成多个关键词，按优先级依次尝试
+    """尝试激活标题包含关键词的窗口。"""
     keywords = [k.strip() for k in title_keyword.split("|")] if "|" in title_keyword else [title_keyword]
 
     system = platform.system()
@@ -239,7 +245,6 @@ def focus_window(title_keyword: str) -> bool:
 
 
 def _focus_linux(keyword: str) -> bool:
-    """xdotool 激活窗口。"""
     try:
         result = subprocess.run(
             ["xdotool", "search", "--name", keyword],
@@ -259,7 +264,6 @@ def _focus_linux(keyword: str) -> bool:
 
 
 def _focus_macos(keyword: str) -> bool:
-    """macOS AppleScript 激活窗口。"""
     script = f'''
     tell application "System Events"
         set frontmost of process "{keyword}" to true
@@ -272,11 +276,8 @@ def _focus_macos(keyword: str) -> bool:
     return result.returncode == 0
 
 
-# ──────────────────────────────────────────────
-# Windows 焦点管理（Win32 API 直调，不依赖 pygetwindow）
-# ──────────────────────────────────────────────
+# ── Windows 焦点管理 ──
 
-# Win32 常量
 _SW_RESTORE = 9
 _SW_SHOW = 5
 _HWND_TOP = 0
@@ -288,7 +289,6 @@ _FLASHW_TIMERNOFG = 0x0000000C
 
 
 def _is_admin() -> bool:
-    """检查当前进程是否以管理员权限运行。"""
     if not _HAS_WIN32:
         return False
     try:
@@ -322,7 +322,6 @@ def _find_hwnd_by_keyword(keyword: str) -> int | None:
 
 
 def _is_foreground(hwnd: int) -> bool:
-    """检查窗口句柄是否已是当前前台窗口。"""
     try:
         return ctypes.windll.user32.GetForegroundWindow() == hwnd
     except Exception:
@@ -330,7 +329,6 @@ def _is_foreground(hwnd: int) -> bool:
 
 
 def _flash_taskbar(hwnd: int) -> None:
-    """闪烁任务栏按钮，引导用户手动激活。"""
     try:
         user32 = ctypes.windll.user32
 
@@ -345,7 +343,7 @@ def _flash_taskbar(hwnd: int) -> None:
 
         info = FLASHWINFO()
         info.cbSize = ctypes.sizeof(FLASHWINFO)
-        info.hwnd = hwnd
+        info.hwnd = wintypes.HWND(hwnd)
         info.dwFlags = _FLASHW_ALL | _FLASHW_TIMERNOFG
         info.uCount = 0
         info.dwTimeout = 0
@@ -355,34 +353,29 @@ def _flash_taskbar(hwnd: int) -> None:
 
 
 def _force_foreground(hwnd: int) -> bool:
-    """强制将窗口置前（绕过 Windows 前台锁）。
-
-    多层回退：
-        1. AttachThreadInput（绕过前台锁）
-        2. Alt 键模拟（改变前台锁上下文）
-        3. 最小化再还原（触发窗口重新激活）
-    """
+    """强制将窗口置前（绕过 Windows 前台锁）。"""
     if not _HAS_WIN32:
         return False
     user32 = ctypes.windll.user32
 
-    # 已经是前台 → 不用操作
     if _is_foreground(hwnd):
         return True
 
-    # ---- 第 1 层：AttachThreadInput ---- 
+    hwnd_param = wintypes.HWND(hwnd)
+
+    # 第 1 层：AttachThreadInput
     foreground_hwnd = user32.GetForegroundWindow()
-    target_tid = user32.GetWindowThreadProcessId(hwnd, None)
+    target_tid = user32.GetWindowThreadProcessId(hwnd_param, None)
     current_tid = user32.GetWindowThreadProcessId(foreground_hwnd, None)
 
     attached = False
     if target_tid != current_tid:
         attached = user32.AttachThreadInput(current_tid, target_tid, True) != 0
 
-    user32.ShowWindow(hwnd, _SW_RESTORE)
-    ok = user32.SetForegroundWindow(hwnd)
+    user32.ShowWindow(hwnd_param, _SW_RESTORE)
+    user32.SetForegroundWindow(hwnd_param)
     user32.SetWindowPos(
-        hwnd, _HWND_TOP, 0, 0, 0, 0,
+        hwnd_param, wintypes.HWND(_HWND_TOP), 0, 0, 0, 0,
         _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW,
     )
 
@@ -392,39 +385,31 @@ def _force_foreground(hwnd: int) -> bool:
     if _is_foreground(hwnd):
         return True
 
-    # ---- 第 2 层：模拟 Alt 键（改变前台锁上下文） ----
-    user32.keybd_event(0x12, 0, 0, 0)  # Alt down
-    user32.keybd_event(0x12, 0, 2, 0)  # Alt up
+    # 第 2 层：模拟 Alt 键
+    user32.keybd_event(0x12, 0, 0, None)
+    user32.keybd_event(0x12, 0, 2, None)
     time.sleep(0.05)
 
-    ok = user32.SetForegroundWindow(hwnd)
+    user32.SetForegroundWindow(hwnd_param)
     user32.SetWindowPos(
-        hwnd, _HWND_TOP, 0, 0, 0, 0,
+        hwnd_param, wintypes.HWND(_HWND_TOP), 0, 0, 0, 0,
         _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW,
     )
 
     if _is_foreground(hwnd):
         return True
 
-    # ---- 第 3 层：最小化再还原 ----
-    user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+    # 第 3 层：最小化再还原
+    user32.ShowWindow(hwnd_param, 6)
     time.sleep(0.1)
-    user32.ShowWindow(hwnd, _SW_RESTORE)
-    ok = user32.SetForegroundWindow(hwnd)
+    user32.ShowWindow(hwnd_param, _SW_RESTORE)
+    user32.SetForegroundWindow(hwnd_param)
 
     return _is_foreground(hwnd)
 
 
 def _focus_windows(keyword: str) -> bool:
-    """Windows：按标题关键词查找窗口并强制置前。
-
-    完整流程：
-        1. 查找窗口句柄
-        2. 检查是否已是前台（跳过无事可做）
-        3. 检查管理员权限（非必需但会影响成功率）
-        4. 强制置前（绕过前台锁）
-        5. 验证结果，失败则闪烁任务栏
-    """
+    """Windows：按标题关键词查找窗口并强制置前。"""
     if not _HAS_WIN32:
         return False
 
@@ -433,16 +418,12 @@ def _focus_windows(keyword: str) -> bool:
         logger.warning(f"未找到标题包含 '{keyword}' 的窗口")
         return False
 
-    # 已经是前台 → 无需操作
     if _is_foreground(hwnd):
-        logger.debug(f"窗口 '{keyword}' 已在焦点")
         return True
 
-    # 管理员提示（仅日志，不阻止执行）
     if not _is_admin():
         logger.info("建议以管理员权限运行，窗口激活更可靠")
 
-    # 强制置前
     ok = _force_foreground(hwnd)
 
     if ok:
@@ -455,10 +436,7 @@ def _focus_windows(keyword: str) -> bool:
 
 
 def is_window_in_focus(title_keyword: str) -> bool:
-    """检查指定关键词的窗口是否当前在前台。
-
-    支持 | 分隔的多个关键词，任一匹配即可。
-    """
+    """检查指定关键词的窗口是否当前在前台。"""
     keywords = [k.strip() for k in title_keyword.split("|")] if "|" in title_keyword else [title_keyword]
     if not _HAS_WIN32:
         return False
@@ -476,6 +454,5 @@ def is_window_in_focus(title_keyword: str) -> bool:
 
 
 def get_screen_size() -> Tuple[int, int]:
-    """获取屏幕分辨率。"""
     import pyautogui
     return pyautogui.size()

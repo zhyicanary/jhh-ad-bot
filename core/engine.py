@@ -30,6 +30,26 @@ logger = logging.getLogger(__name__)
 
 _HAS_WIN32 = hasattr(ctypes, "windll")
 
+# 设置 Win32 API 参数类型，避免 64 位 HWND 溢出
+if _HAS_WIN32:
+    _user32 = ctypes.windll.user32
+    _user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    _user32.GetWindowRect.restype = wintypes.BOOL
+    _user32.IsWindow.argtypes = [wintypes.HWND]
+    _user32.IsWindow.restype = wintypes.BOOL
+    _user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    _user32.IsWindowVisible.restype = wintypes.BOOL
+    _user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    _user32.GetWindowTextLengthW.restype = ctypes.c_int
+    _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _user32.GetWindowTextW.restype = ctypes.c_int
+    _user32.GetForegroundWindow.argtypes = []
+    _user32.GetForegroundWindow.restype = wintypes.HWND
+    _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    _user32.SetForegroundWindow.restype = wintypes.BOOL
+    _user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    _user32.ShowWindow.restype = wintypes.BOOL
+
 
 class State(Enum):
     INIT = auto()
@@ -199,17 +219,17 @@ class AdBotEngine:
         try:
             user32 = ctypes.windll.user32
             rect = wintypes.RECT()
-            user32.GetWindowRect(self._target_hwnd, ctypes.byref(rect))
+            user32.GetWindowRect(wintypes.HWND(self._target_hwnd), ctypes.byref(rect))
             self._win_rect = (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"GetWindowRect 失败: {e}")
 
     def _ensure_window(self) -> bool:
         """确保有有效的目标窗口。窗口关闭时自动重新查找。"""
         user32 = ctypes.windll.user32
         # 检查现有 hwnd 是否仍然有效
         if self._target_hwnd is not None:
-            if not user32.IsWindow(self._target_hwnd):
+            if not user32.IsWindow(wintypes.HWND(self._target_hwnd)):
                 logger.warning("  目标窗口已关闭，尝试重新查找...")
                 self._target_hwnd = None
         # 查找窗口
@@ -485,11 +505,22 @@ class AdBotEngine:
         if self._target_hwnd:
             self._update_win_rect()
             logger.info(f"  目标窗口: hwnd={self._target_hwnd} rect={self._win_rect}")
+            self._ensure_focus()
+            action_wait(self._t_init)
+            self.state = State.DISMISS_SUBSCRIBE
         else:
-            logger.warning("  未找到目标窗口!")
-        self._ensure_focus()
-        action_wait(self._t_init)
-        self.state = State.DISMISS_SUBSCRIBE
+            logger.error("  未找到目标窗口！请确保简幻欢小程序已打开。")
+            logger.error("  等待 10 秒后重试...")
+            action_wait(10)
+            self._target_hwnd = self._find_target_hwnd()
+            if self._target_hwnd:
+                self._update_win_rect()
+                self._ensure_focus()
+                action_wait(self._t_init)
+                self.state = State.DISMISS_SUBSCRIBE
+            else:
+                logger.error("  仍未找到窗口，停止运行。")
+                self.state = State.STOP
 
     def _handle_dismiss_subscribe(self) -> None:
         logger.info("[订阅提醒] 检测订阅弹窗...")
