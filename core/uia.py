@@ -279,12 +279,10 @@ def invoke_at_point(screen_x: int, screen_y: int) -> bool:
 
 
 def exists(hwnd: int, name: str) -> bool:
-    """检查 UIA 树中是否存在名称匹配的可操作元素。
+    """检查 UIA 树中是否存在名称匹配的元素。
 
-    只返回 True 当元素满足：
-      - 不是系统按钮
-      - BoundingRectangle 有效（可见）
-      - 名称不是描述性文字
+    不检查 BoundingRectangle — InvokePattern 可以调用不可见的元素。
+    只过滤系统按钮和描述性文字。
     """
     if not _UIA_AVAILABLE:
         return False
@@ -298,7 +296,7 @@ def exists(hwnd: int, name: str) -> bool:
     def walk(elem, depth=0):
         if found[0] or depth > 25:
             return
-        if not _is_system_button(elem) and _has_valid_rect(elem):
+        if not _is_system_button(elem):
             elem_name = elem.Name or ""
             if name in elem_name and not _is_description_text(elem_name, name, False):
                 found[0] = True
@@ -348,17 +346,16 @@ def list_elements(hwnd: int, max_count: int = 50) -> list[tuple[str, str, bool]]
 def _find_elements_by_name(win_elem, name: str, exact: bool) -> list:
     """在 UIA 树中查找名称匹配的元素。
 
-    过滤规则：
-      - 跳过系统按钮（Minimize/Maximize/Close）
-      - 跳过 BoundingRectangle 为 (0,0,0,0) 的不可见元素
-      - 跳过名称远长于关键词的描述性文字（非精确匹配时）
+    不检查 BoundingRectangle — InvokePattern 可以调用不可见的元素
+    （如页面底部需要滚动才能看到的按钮）。
+    只过滤系统按钮和描述性文字。
     """
     matched = []
 
     def walk(elem, depth=0):
         if depth > 25 or len(matched) >= 10:
             return
-        if not _is_system_button(elem) and _has_valid_rect(elem):
+        if not _is_system_button(elem):
             elem_name = elem.Name or ""
             if exact:
                 if elem_name == name:

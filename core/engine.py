@@ -445,38 +445,67 @@ class AdBotEngine:
         return False
 
     def _scroll_down(self, clicks: int = 5) -> None:
-        """在窗口中心向下滚动鼠标滚轮，查找页面底部的元素。"""
-        if not self._target_hwnd:
-            return
-        self._update_win_rect()
-        ox, oy, w, h = self._win_rect
-        cx = ox + w // 2
-        cy = oy + h // 2
-        logger.info(f"  滚动: clicks={clicks} @ screen({cx},{cy})")
-        # 移动鼠标到窗口中心再滚动
-        import ctypes
-        user32 = ctypes.windll.user32
-        user32.SetCursorPos(cx, cy)
-        action_wait(0.1)
-        import pyautogui
-        pyautogui.scroll(-clicks * 3)  # 负值=向下
-        action_wait(0.5)
+        """在窗口中心向下滚动鼠标滚轮。
+
+        使用 SendInput + MOUSEEVENTF_WHEEL（对 Chromium 有效），
+        pyautogui.scroll 对 Chromium 窗口无效。
+        """
+        self._send_scroll(clicks * -120 * 3)  # 负值=向下
 
     def _scroll_up(self, clicks: int = 5) -> None:
         """在窗口中心向上滚动鼠标滚轮。"""
+        self._send_scroll(clicks * 120 * 3)  # 正值=向上
+
+    def _send_scroll(self, wheel_delta: int) -> None:
+        """通过 SendInput 发送鼠标滚轮事件。
+
+        Args:
+            wheel_delta: 正值向上滚，负值向下滚（标准 Windows WHEEL_DELTA=120）
+        """
         if not self._target_hwnd:
             return
         self._update_win_rect()
         ox, oy, w, h = self._win_rect
         cx = ox + w // 2
         cy = oy + h // 2
-        logger.info(f"  向上滚动: clicks={clicks} @ screen({cx},{cy})")
+
+        direction = "向下" if wheel_delta < 0 else "向上"
+        logger.info(f"  滚动{direction}: delta={wheel_delta} @ screen({cx},{cy})")
+
         import ctypes
         user32 = ctypes.windll.user32
+
+        # 移动鼠标到窗口中心
         user32.SetCursorPos(cx, cy)
         action_wait(0.1)
-        import pyautogui
-        pyautogui.scroll(clicks * 3)  # 正值=向上
+
+        # SendInput 鼠标滚轮
+        MOUSEEVENTF_WHEEL = 0x0800
+        INPUT_MOUSE = 0
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [
+                ("dx", ctypes.c_long),
+                ("dy", ctypes.c_long),
+                ("mouseData", ctypes.c_uint32),
+                ("dwFlags", ctypes.c_uint32),
+                ("time", ctypes.c_uint32),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+            ]
+
+        class INPUT_UNION(ctypes.Union):
+            _fields_ = [("mi", MOUSEINPUT)]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [
+                ("type", ctypes.c_uint32),
+                ("union", INPUT_UNION),
+            ]
+
+        # mouseData 的高位字是 wheel_delta
+        mi = MOUSEINPUT(0, 0, wheel_delta & 0xFFFFFFFF, MOUSEEVENTF_WHEEL, 0, None)
+        inp = INPUT(INPUT_MOUSE, INPUT_UNION(mi))
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
         action_wait(0.5)
 
     def _close_popup_x(self) -> bool:
