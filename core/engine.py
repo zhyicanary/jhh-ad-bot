@@ -725,17 +725,10 @@ class AdBotEngine:
         冒泡文字总共就1-2秒，快速检测后直接继续循环。
         """
         logger.info("[等待奖励] 等待加载完成...")
-        # 等"加载中"出现（最多2秒）
-        if self._wait_for_text(self._kw_loading, timeout=2, interval=0.5):
-            logger.info("  加载中...")
-            self._wait_for_text_gone(self._kw_loading, timeout=3, interval=0.5)
-            logger.info("  加载完成")
-        # 等"获得签到奖励"出现（最多3秒）
-        if self._wait_for_text(self._kw_reward, timeout=3, interval=0.5):
-            logger.info("  ★ 获得签到奖励！")
-            action_wait(1)
-        else:
-            logger.info("  未检测到奖励提示，继续循环")
+        # 加载中+获得签到奖励总共1-2秒，快速检测后直接继续
+        self._wait_for_text(self._kw_loading, timeout=1, interval=0.3)
+        self._wait_for_text(self._kw_reward, timeout=2, interval=0.3)
+        logger.info("  继续循环")
         self.stats.rounds += 1
         logger.info(f"  本轮完成 (第{self.stats.rounds}轮)")
         self.state = State.CLICK_AD
