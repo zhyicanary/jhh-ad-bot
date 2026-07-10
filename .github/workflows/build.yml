@@ -29,7 +29,7 @@ jobs:
       - name: 打包 exe
         shell: cmd
         run: |
-          pyinstaller --onefile --name jhh-ad-bot --console ^
+          pyinstaller --uac-admin --onefile --name jhh-ad-bot --console ^
             --add-data "config.yaml;." ^
             --collect-all cv2 ^
             --collect-all pyautogui ^
