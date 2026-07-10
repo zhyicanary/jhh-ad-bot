@@ -37,17 +37,18 @@ _enable_dpi_awareness()
 
 
 def _setup_argtypes():
-    """设置 Win32 API 函数的参数类型，避免 64 位 HWND 溢出。
+    """设置 Win32 API 函数的参数类型，避免 64 位句柄溢出。
 
-    ctypes 默认把整数参数当 c_int（32 位），但 64 位 Windows 的 HWND
-    是 64 位指针，值可能超过 32 位整数范围导致 OverflowError。
+    ctypes 默认把整数参数当 c_int（32 位），但 64 位 Windows 的
+    HWND/HDC/HBITMAP 等句柄是 64 位指针，值可能超过 32 位整数范围
+    导致 OverflowError。设置 argtypes 为 c_void_p 可正确处理。
     """
     if not _HAS_WIN32:
         return
     user32 = ctypes.windll.user32
     gdi32 = ctypes.windll.gdi32
 
-    # HWND 参数必须是 wintypes.HWND (c_void_p 在 64 位上是 8 字节)
+    # user32: HWND 参数
     user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     user32.GetWindowRect.restype = wintypes.BOOL
 
@@ -60,29 +61,33 @@ def _setup_argtypes():
     user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
     user32.ReleaseDC.restype = ctypes.c_int
 
-    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
-    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    # gdi32: 所有句柄参数用 c_void_p（HDC/HBITMAP/HGDIOBJ 都是指针类型）
+    gdi32.CreateCompatibleDC.argtypes = [ctypes.c_void_p]
+    gdi32.CreateCompatibleDC.restype = ctypes.c_void_p
 
-    gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
-    gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+    gdi32.CreateCompatibleBitmap.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    gdi32.CreateCompatibleBitmap.restype = ctypes.c_void_p
 
-    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
-    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    gdi32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    gdi32.SelectObject.restype = ctypes.c_void_p
 
     gdi32.BitBlt.argtypes = [
-        wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-        wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
     ]
     gdi32.BitBlt.restype = wintypes.BOOL
 
-    # GetDIBits: 不设置 argtypes，让 ctypes 自动转换
-    # （第6参数是 LPBITMAPINFO，传 byref(BITMAPINFOHEADER) 时自动转换最可靠）
+    # GetDIBits: 第6参数是 LPBITMAPINFO，用 c_void_p 接受 byref(BITMAPINFOHEADER)
+    gdi32.GetDIBits.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT, wintypes.UINT,
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT,
+    ]
     gdi32.GetDIBits.restype = ctypes.c_int
 
-    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
     gdi32.DeleteObject.restype = wintypes.BOOL
 
-    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    gdi32.DeleteDC.argtypes = [ctypes.c_void_p]
     gdi32.DeleteDC.restype = wintypes.BOOL
 
 
