@@ -379,11 +379,13 @@ class AdBotEngine:
     def _find_and_click(
         self, keywords: list[str], region=None, wait_after: float = 1.0, exact: bool = False
     ) -> Optional[Tuple[int, int, str]]:
-        """查找文字并点击 — 三层点击策略。
+        """查找文字并点击 — 两层策略（去掉坐标点击兜底）。
 
-        策略1: UIA 名称搜索 + InvokePattern（对有 accessible name 的元素最可靠）
-        策略2: OCR 定位 + ControlFromPoint + InvokePattern（对无 accessible name 的元素）
-        策略3: OCR 坐标点击（最后兜底，对 Chromium 窗口可能无效）
+        策略1: UIA 名称搜索 + InvokePattern/DoDefaultAction（最可靠）
+        策略2: OCR 定位 + ControlFromPoint + InvokePattern
+
+        不使用策略3（OCR 坐标点击），因为 SendInput 对 Chromium 无效，
+        且签到后页面跳转时坐标点击可能误触其他元素。
 
         Args:
             exact: True=UIA精确匹配名称，False=子串匹配
@@ -399,15 +401,9 @@ class AdBotEngine:
         if point_result is not None:
             return point_result
 
-        # 策略3: OCR 坐标点击（最后兜底）
-        logger.info(f"  ControlFromPoint 未命中，尝试坐标点击: {keywords}")
-        result = self._find_text(keywords, region=region)
-        if result is None:
-            return None
-        x, y, text = result
-        self._ensure_focus()
-        self._click_win(x, y, clicks=1, wait_after=wait_after)
-        return (x, y, text)
+        # 不使用坐标点击兜底 — 对 Chromium 无效且可能误触
+        logger.info(f"  未找到可点击元素: {keywords}")
+        return None
 
     def _navigate_to_tab(self, keywords: list[str], wait_after: float = 2.0) -> Optional[str]:
         """导航到指定标签页。
@@ -606,7 +602,7 @@ class AdBotEngine:
                 logger.warning("  发现订阅弹窗但未能点击按钮")
         else:
             logger.info("  未发现订阅弹窗，跳过")
-        self.state = State.CLICK_AD
+        self.state = State.CHECK_IN
 
     def _handle_check_in(self) -> None:
         logger.info("[签到] 开始签到流程...")
