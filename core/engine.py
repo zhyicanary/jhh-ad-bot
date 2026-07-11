@@ -53,6 +53,7 @@ if _HAS_WIN32:
 
 class State(Enum):
     OPEN_WECHAT = auto()
+    OPEN_MINI_PROGRAM = auto()
     INIT = auto()
     DISMISS_SUBSCRIBE = auto()
     CHECK_IN = auto()
@@ -156,6 +157,7 @@ class AdBotEngine:
     def _tick(self) -> None:
         handlers = {
             State.OPEN_WECHAT: self._handle_open_wechat,
+            State.OPEN_MINI_PROGRAM: self._handle_open_mini_program,
             State.INIT: self._handle_init,
             State.DISMISS_SUBSCRIBE: self._handle_dismiss_subscribe,
             State.CHECK_IN: self._handle_check_in,
@@ -617,7 +619,7 @@ class AdBotEngine:
             user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
             user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
             action_wait(2.0)
-            self.state = State.INIT
+            self.state = State.OPEN_MINI_PROGRAM
             return
 
         # 微信没运行，启动它
@@ -709,26 +711,151 @@ class AdBotEngine:
                 if wechat_hwnd:
                     logger.info(f"  微信窗口已出现 (hwnd={wechat_hwnd})")
                     user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-                    # 微信刚启动可能显示登录页面，等待用户登录完成
-                    # 检测窗口标题变化（登录后标题会变成"微信"/"Weixin"+用户名）
-                    logger.info("  等待微信登录完成...")
-                    logger.info("  如果显示登录页面，请在手机上确认登录")
-                    # 等待 15 秒让用户登录
-                    action_wait(15.0)
-                    # 重新激活窗口
-                    find_wechat()
-                    if wechat_hwnd:
-                        user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-                        action_wait(2.0)
-                    self.state = State.INIT
+                    action_wait(2.0)
+                    # 点击"进入微信"按钮（登录页面）
+                    self._click_enter_wechat(wechat_hwnd)
+                    action_wait(3.0)
+                    self.state = State.OPEN_MINI_PROGRAM
                     return
             logger.error("  微信启动超时（30秒未出现窗口）")
-            self.state = State.INIT
+            self.state = State.OPEN_MINI_PROGRAM
         else:
             logger.error("  未找到微信安装路径！")
             logger.error("  请在托盘右键菜单'配置'中设置微信路径")
             logger.error("  或手动打开微信后重新运行程序")
             self.state = State.STOP
+
+    def _click_enter_wechat(self, wechat_hwnd: int) -> None:
+        """点击微信登录页面的"进入微信"按钮。
+
+        新版微信启动后显示登录页面，有"进入微信"按钮。
+        用 UIA 搜索按钮名称，或 OCR 定位后坐标点击。
+        """
+        logger.info("  查找'进入微信'按钮...")
+        # 用 UIA 搜索
+        from core import uia as uia_mod
+        keywords = ["进入微信", "Enter Weixin", "登录", "Login"]
+        for kw in keywords:
+            if uia_mod.exists(wechat_hwnd, kw):
+                result = uia_mod.find_and_invoke(wechat_hwnd, kw, wait_after=3.0)
+                if result:
+                    logger.info(f"  已点击'{kw}'")
+                    return
+        # UIA 没找到，用 OCR + 坐标点击
+        self._target_hwnd = wechat_hwnd
+        self._update_win_rect()
+        result = self._find_and_click(keywords, wait_after=3.0)
+        if result:
+            logger.info(f"  已点击'{result[2]}'（OCR 坐标点击）")
+        else:
+            logger.warning("  未找到'进入微信'按钮，可能已自动登录")
+
+    def _handle_open_mini_program(self) -> None:
+        """通过微信搜索框打开简幻欢小程序。
+
+        流程：
+        1. 找到微信主窗口并激活
+        2. 用 Ctrl+F 打开搜索框
+        3. 输入"简幻欢"
+        4. 等待搜索结果
+        5. 点击搜索结果中的小程序
+        6. 等待小程序窗口出现
+        """
+        logger.info("[打开小程序] 通过搜索打开简幻欢小程序...")
+
+        if not _HAS_WIN32:
+            self.state = State.INIT
+            return
+
+        user32 = ctypes.windll.user32
+
+        # 1. 找到微信窗口
+        wechat_hwnd = None
+        wechat_keywords = ["微信", "WeChat", "Weixin"]
+
+        def find_wechat():
+            nonlocal wechat_hwnd
+            found = []
+
+            def callback(hwnd, _lparam):
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+                length = user32.GetWindowTextLengthW(hwnd) + 1
+                if length <= 1:
+                    return True
+                buf = ctypes.create_unicode_buffer(length)
+                user32.GetWindowTextW(hwnd, buf, length)
+                title = buf.value
+                for kw in wechat_keywords:
+                    if kw in title:
+                        found.append(hwnd)
+                        break
+                return True
+
+            enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            user32.EnumWindows(enum_cb(callback), 0)
+            wechat_hwnd = found[0] if found else None
+
+        find_wechat()
+        if not wechat_hwnd:
+            logger.error("  微信窗口未找到，跳过")
+            self.state = State.INIT
+            return
+
+        # 2. 激活微信窗口
+        logger.info(f"  激活微信窗口 (hwnd={wechat_hwnd})")
+        user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
+        user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
+        action_wait(1.0)
+
+        # 3. 用 Ctrl+F 打开搜索框
+        logger.info("  按 Ctrl+F 打开搜索框...")
+        import pyautogui
+        pyautogui.hotkey("ctrl", "f")
+        action_wait(1.5)
+
+        # 4. 输入"简幻欢"
+        logger.info("  输入'简幻欢'...")
+        pyautogui.typewrite("简幻欢", interval=0.05) if False else None
+        # pyautogui 不支持中文输入，用剪贴板粘贴
+        import subprocess as sp
+        sp.Popen(["clip"], stdin=sp.PIPE).communicate("简幻欢".encode("utf-16-le"))
+        pyautogui.hotkey("ctrl", "v")
+        action_wait(2.0)
+
+        # 5. 等待搜索结果，按回车搜索
+        logger.info("  按回车搜索...")
+        pyautogui.press("enter")
+        action_wait(3.0)
+
+        # 6. 查找搜索结果中的"简幻欢"并点击
+        logger.info("  查找搜索结果中的小程序...")
+        self._target_hwnd = wechat_hwnd
+        self._update_win_rect()
+
+        # 先用 UIA 搜索
+        from core import uia as uia_mod
+        if uia_mod.exists(wechat_hwnd, "简幻欢"):
+            result = uia_mod.find_and_invoke(wechat_hwnd, "简幻欢", wait_after=5.0)
+            if result:
+                logger.info("  已点击搜索结果中的'简幻欢'")
+                action_wait(5.0)
+                self.state = State.INIT
+                return
+
+        # UIA 没找到，用 OCR + 坐标点击
+        result = self._find_and_click(["简幻欢"], wait_after=5.0)
+        if result:
+            logger.info("  已点击搜索结果中的'简幻欢'（OCR）")
+            action_wait(5.0)
+            self.state = State.INIT
+            return
+
+        logger.warning("  搜索结果中未找到'简幻欢'，尝试回退...")
+        # 按Esc关闭搜索
+        pyautogui.press("escape")
+        action_wait(1.0)
+        self.state = State.INIT
 
     def _handle_init(self) -> None:
         logger.info("[INIT] 激活窗口...")
