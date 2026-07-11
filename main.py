@@ -36,6 +36,44 @@ def resource_path(relative_path: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
+def get_config_path(config_name: str = "config.yaml") -> str:
+    """获取配置文件路径。
+
+    优先级：
+    1. exe 同目录（用户可修改）
+    2. 打包内置的模板（sys._MEIPASS）
+
+    如果 exe 同目录没有 config.yaml，从内置模板复制一份过去，
+    这样用户可以直接在同目录修改配置。
+    """
+    # exe 所在目录（打包后）或脚本所在目录（开发时）
+    if hasattr(sys, "frozen"):
+        exe_dir = os.path.dirname(sys.executable)
+    else:
+        exe_dir = os.path.dirname(os.path.abspath(__file__))
+
+    external_path = os.path.join(exe_dir, config_name)
+    internal_path = resource_path(config_name)
+
+    # exe 同目录有配置文件，直接用
+    if os.path.exists(external_path):
+        return external_path
+
+    # 没有就从内置模板复制一份到 exe 同目录
+    if os.path.exists(internal_path):
+        import shutil
+        try:
+            shutil.copy2(internal_path, external_path)
+            print(f"已生成默认配置文件: {external_path}")
+            print(f"请修改此文件后重新运行程序。")
+            return external_path
+        except Exception:
+            # 复制失败就直接用内置的
+            return internal_path
+
+    return external_path
+
+
 def load_config(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -104,8 +142,8 @@ def main():
         datefmt="%H:%M:%S",
     )
 
-    # 加载配置（支持 PyInstaller 打包路径）
-    config_path = resource_path(args.config)
+    # 加载配置（exe 同目录优先，不存在则从内置模板生成）
+    config_path = get_config_path(args.config) if args.config == "config.yaml" else args.config
     if not os.path.exists(config_path):
         print(f"配置文件不存在: {config_path}")
         if os.name == "nt":
