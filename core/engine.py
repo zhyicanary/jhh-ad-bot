@@ -58,6 +58,7 @@ class State(Enum):
     DISMISS_SUBSCRIBE = auto()
     CHECK_IN = auto()
     CLICK_AD = auto()
+    DISMISS_INTERSTITIAL = auto()
     WATCHING_AD = auto()
     CLOSE_AD = auto()
     WAITING_REWARD = auto()
@@ -162,6 +163,7 @@ class AdBotEngine:
             State.DISMISS_SUBSCRIBE: self._handle_dismiss_subscribe,
             State.CHECK_IN: self._handle_check_in,
             State.CLICK_AD: self._handle_click_ad,
+            State.DISMISS_INTERSTITIAL: self._handle_dismiss_interstitial,
             State.WATCHING_AD: self._handle_watching_ad,
             State.CLOSE_AD: self._handle_close_ad,
             State.WAITING_REWARD: self._handle_waiting_reward,
@@ -919,6 +921,12 @@ class AdBotEngine:
         self.state = State.CLICK_AD
 
     def _handle_click_ad(self) -> None:
+        """点击"观看广告"按钮。
+
+        点击后进入 DISMISS_INTERSTITIAL 状态：
+        - 如果出现插屏弹窗广告，点"X"关掉
+        - 如果没有插屏，直接进入观看广告
+        """
         # 确保窗口存在
         if not self._ensure_window():
             logger.warning("[观看广告] 目标窗口不存在，等待重试...")
@@ -932,7 +940,7 @@ class AdBotEngine:
             if attempt == 0:
                 action_wait(2.0)
 
-            # 直接用 _find_and_click 查找并点击（UIA > ControlFromPoint > 坐标）
+            # 如果已经在播放广告（检测到关闭按钮），直接进入观看状态
             has_close = self._has_text(self._kw_close)
             if has_close:
                 logger.info("  广告已开始播放（检测到关闭按钮）")
@@ -941,10 +949,13 @@ class AdBotEngine:
                 self._ad_not_found_count = 0
                 return
 
-            # 直接尝试点击"观看广告"（UIA 能找到页面底部的不可见元素）
+            # 点击"观看广告"
             result = self._find_and_click(self._kw_ad, wait_after=self._t_ad_click)
             if result is not None:
-                continue
+                # 点击成功，进入插屏广告处理状态
+                logger.info("  已点击'观看广告'，进入插屏广告处理")
+                self.state = State.DISMISS_INTERSTITIAL
+                return
 
             # 没找到，检查上限
             if self._has_text(self._kw_limit):
@@ -952,20 +963,9 @@ class AdBotEngine:
                 self.state = State.STOP
                 return
 
-            # 等待页面加载后重试
+            # 等待重试
             logger.info(f"  未找到观看广告，等待重试...")
             action_wait(self._t_check_interval)
-
-            # 只在检测到弹窗类元素时才尝试关闭（避免误关窗口）
-            has_popup = (
-                self._has_text(["×", "跳过", "确定", "知道了"])
-                or self._has_uia(["×", "跳过", "确定", "知道了"])
-            )
-            if has_popup:
-                logger.info("  检测到弹窗，尝试关闭")
-                self._close_popup_x()
-            else:
-                logger.info("  未检测到弹窗，等待重试")
 
         self._ad_not_found_count += 1
         logger.info(f"  本轮未成功 ({self._ad_not_found_count}/{self._max_ad_not_found})")
@@ -975,6 +975,67 @@ class AdBotEngine:
         else:
             self.stats.ad_skipped += 1
             action_wait(self._t_check_interval)
+
+    def _handle_dismiss_interstitial(self) -> None:
+        """处理插屏弹窗广告。
+
+        点击"观看广告"后可能出现一个插屏弹窗广告（不是30秒视频广告），
+        页面上有一个"X"按钮，点掉它后才会开始真正的30秒视频广告。
+
+        判断逻辑：
+        - 检测到"关闭"按钮 → 30秒视频广告已开始，直接进入 WATCHING_AD
+        - 检测到弹窗"×"/"X"/"跳过" → 插屏广告，点掉它
+        - 都没检测到 → 等待几秒后重试
+        - 等待超时 → 可能没有插屏广告，直接进入 WATCHING_AD
+        """
+        if not self._ensure_window():
+            logger.warning("[插屏广告] 目标窗口不存在")
+            self.state = State.CLICK_AD
+            return
+
+        for attempt in range(5):
+            logger.info(f"[插屏广告] 第{attempt + 1}次检测...")
+
+            # 1. 检测30秒视频广告是否已开始（有"关闭"按钮）
+            if self._has_text(self._kw_close):
+                logger.info("  30秒视频广告已开始，进入观看状态")
+                self.state = State.WATCHING_AD
+                self._watch_start = time.time()
+                self._ad_not_found_count = 0
+                return
+
+            # 2. 检测插屏弹窗广告（有×/X/跳过等按钮）
+            popup_keywords = ["×", "✕", "✖", "跳过", "关闭广告", "X"]
+            has_popup = self._has_text(popup_keywords) or self._has_uia(popup_keywords)
+            if has_popup:
+                logger.info("  检测到插屏弹窗广告，尝试关闭")
+                # 先用 UIA 搜索×按钮
+                for kw in ["×", "✕", "✖", "跳过", "关闭广告"]:
+                    result = self._find_and_click([kw], wait_after=2.0)
+                    if result:
+                        logger.info(f"  已关闭插屏广告 (点击了 '{result[2]}')")
+                        action_wait(2.0)
+                        # 关闭后重新检测，可能视频广告开始
+                        if self._has_text(self._kw_close):
+                            logger.info("  30秒视频广告已开始，进入观看状态")
+                            self.state = State.WATCHING_AD
+                            self._watch_start = time.time()
+                            self._ad_not_found_count = 0
+                            return
+                        # 没有关闭按钮，可能需要再点"观看广告"
+                        self.state = State.CLICK_AD
+                        return
+                logger.warning("  检测到弹窗但未能关闭")
+            else:
+                logger.info("  未检测到插屏广告，等待...")
+
+            action_wait(self._t_check_interval)
+
+        # 超时：可能没有插屏广告，直接进入观看状态检测
+        logger.info("  插屏广告处理超时，进入观看状态检测")
+        self.state = State.WATCHING_AD
+        self._watch_start = time.time()
+        self._ad_not_found_count = 0
 
     def _handle_watching_ad(self) -> None:
         """观看广告中，处理中断弹窗。
