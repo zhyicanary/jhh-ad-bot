@@ -1,4 +1,11 @@
-﻿# ===== 目标窗口 =====
+﻿# ===== 微信配置 =====
+wechat:
+  # 微信安装路径，留空则自动搜索
+  # 如果自动搜索找不到，请填入你的 WeChat.exe 路径，例如：
+  #   path: "D:\WeChat\WeChat.exe"
+  path: ""
+
+# ===== 目标窗口 =====
 window:
   title_keyword: "简幻欢|WeChatAppEx|微信"  # 窗口关键词(按优先级|分隔)
   auto_focus: true                           # 每次操作前自动激活窗口

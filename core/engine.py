@@ -623,19 +623,27 @@ class AdBotEngine:
         import os
         import subprocess
 
-        wechat_paths = [
-            os.path.expandvars(r"%PROGRAMFILES%\Tencent\WeChat\WeChat.exe"),
-            os.path.expandvars(r"%PROGRAMFILES(X86)%\Tencent\WeChat\WeChat.exe"),
-            os.path.expandvars(r"%LOCALAPPDATA%\Tencent\WeChat\WeChat.exe"),
-        ]
-
+        # 1. 优先使用配置文件中指定的路径
         wechat_exe = None
-        for path in wechat_paths:
-            if os.path.exists(path):
-                wechat_exe = path
-                break
+        cfg_path = self.config.get("wechat", {}).get("path", "")
+        if cfg_path and os.path.exists(cfg_path):
+            wechat_exe = cfg_path
+            logger.info(f"  使用配置的微信路径: {wechat_exe}")
 
-        # 从注册表查找
+        # 2. 搜索常见路径
+        if wechat_exe is None:
+            wechat_paths = [
+                os.path.expandvars(r"%PROGRAMFILES%\Tencent\WeChat\WeChat.exe"),
+                os.path.expandvars(r"%PROGRAMFILES(X86)%\Tencent\WeChat\WeChat.exe"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Tencent\WeChat\WeChat.exe"),
+                os.path.expandvars(r"%APPDATA%\Tencent\WeChat\WeChat.exe"),
+            ]
+            for path in wechat_paths:
+                if os.path.exists(path):
+                    wechat_exe = path
+                    break
+
+        # 3. 从注册表查找
         if wechat_exe is None:
             try:
                 import winreg
@@ -656,11 +664,44 @@ class AdBotEngine:
             except ImportError:
                 pass
 
+        # 4. 全盘搜索 WeChat.exe（扫描所有盘符的 Tencent 目录）
+        if wechat_exe is None:
+            logger.info("  常见路径未找到，全盘搜索 WeChat.exe...")
+            for drive in ["C", "D", "E", "F", "G"]:
+                drive_root = f"{drive}:\\"
+                if not os.path.exists(drive_root):
+                    continue
+                # 常见安装目录
+                search_dirs = [
+                    os.path.join(drive_root, "Tencent", "WeChat", "WeChat.exe"),
+                    os.path.join(drive_root, "Program Files", "Tencent", "WeChat", "WeChat.exe"),
+                    os.path.join(drive_root, "Program Files (x86)", "Tencent", "WeChat", "WeChat.exe"),
+                    os.path.join(drive_root, "WeChat", "WeChat.exe"),
+                ]
+                for path in search_dirs:
+                    if os.path.exists(path):
+                        wechat_exe = path
+                        break
+                if wechat_exe:
+                    break
+                # 深度搜索：遍历盘符下的 Tencent 文件夹
+                tencent_dir = os.path.join(drive_root, "Tencent")
+                if os.path.isdir(tencent_dir):
+                    for root, dirs, files in os.walk(tencent_dir):
+                        if "WeChat.exe" in files:
+                            wechat_exe = os.path.join(root, "WeChat.exe")
+                            break
+                        # 只搜一层
+                        if root.count(os.sep) > 4:
+                            dirs.clear()
+                    if wechat_exe:
+                        break
+
         if wechat_exe:
             logger.info(f"  启动微信: {wechat_exe}")
             subprocess.Popen([wechat_exe])
-            # 等待微信窗口出现（最多 15 秒）
-            for i in range(30):
+            # 等待微信窗口出现（最多 20 秒）
+            for i in range(40):
                 action_wait(0.5)
                 find_wechat()
                 if wechat_hwnd:
@@ -669,11 +710,15 @@ class AdBotEngine:
                     action_wait(2.0)
                     self.state = State.INIT
                     return
-            logger.error("  微信启动超时（15秒未出现窗口）")
-            self.state = State.INIT  # 继续尝试找简幻欢窗口
-        else:
-            logger.error("  未找到微信安装路径，请手动打开微信")
+            logger.error("  微信启动超时（20秒未出现窗口）")
             self.state = State.INIT
+        else:
+            logger.error("  未找到微信安装路径！")
+            logger.error("  请在 config.yaml 中配置 wechat.path，例如：")
+            logger.error('    wechat:')
+            logger.error('      path: "D:\\Tencent\\WeChat\\WeChat.exe"')
+            logger.error("  或手动打开微信后重新运行程序")
+            self.state = State.STOP
 
     def _handle_init(self) -> None:
         logger.info("[INIT] 激活窗口...")
