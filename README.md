@@ -172,7 +172,3 @@ jhh-ad-bot/
 - Python 3.10+
 - Windows 10/11
 - opencv-python, rapidocr-onnxruntime, uiautomation, pystray 等
-
-## 许可
-
-私有项目，未公开发布。
