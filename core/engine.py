@@ -730,19 +730,16 @@ class AdBotEngine:
         self._target_hwnd = wechat_hwnd
         self._update_win_rect()
 
-        # 先用 UIA 搜索
-        if uia.exists(wechat_hwnd, "简幻欢"):
-            uia.find_and_invoke(wechat_hwnd, "简幻欢")
-            logger.info("  已点击搜索结果中的'简幻欢'")
-            action_wait(5.0)
-            self.state = State.INIT
-            return
-
-        # UIA 没找到，用 OCR + 坐标点击
-        result = self._find_and_click(["简幻欢"], wait_after=5.0)
+        # 微信是原生窗口，UIA Invoke 返回成功但实际无效。
+        # 直接用 OCR 找"简幻欢"并坐标点击。
+        # OCR 精确匹配优先（先找 text=="简幻欢" 的，而非"简幻欢小程序"等）
+        result = self._find_text(["简幻欢"])
         if result:
-            logger.info("  已点击搜索结果中的'简幻欢'（OCR）")
-            action_wait(5.0)
+            x, y, text = result
+            logger.info(f"  OCR 找到'{text}' @ ({x},{y})，点击")
+            self._ensure_focus()
+            self._click_win(x, y, clicks=1, wait_after=5.0)
+            logger.info("  已点击搜索结果中的'简幻欢'")
             self.state = State.INIT
             return
 
