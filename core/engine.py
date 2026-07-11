@@ -245,6 +245,30 @@ class AdBotEngine:
         user32.EnumWindows(enum_cb(callback), 0)
         return found[0] if found else None
 
+    def _set_clipboard_text(self, text: str) -> None:
+        """用 Win32 API 直接设置剪贴板文本（避免 clip 命令编码问题）。"""
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        user32.OpenClipboard(0)
+        user32.EmptyClipboard()
+
+        # CF_UNICODETEXT = 13
+        data = text + "\0"
+        data_bytes = data.encode("utf-16-le")
+        h_global = kernel32.GlobalAlloc(0x0042, len(data_bytes))  # GMEM_MOVEABLE | GMEM_ZEROINIT
+        if not h_global:
+            user32.CloseClipboard()
+            return
+        locked = kernel32.GlobalLock(h_global)
+        if not locked:
+            user32.CloseClipboard()
+            return
+        ctypes.memmove(locked, data_bytes, len(data_bytes))
+        kernel32.GlobalUnlock(h_global)
+        user32.SetClipboardData(13, h_global)  # CF_UNICODETEXT
+        user32.CloseClipboard()
+
     def _update_win_rect(self) -> None:
         """更新目标窗口的屏幕坐标。"""
         if not _HAS_WIN32 or self._target_hwnd is None:
@@ -644,8 +668,14 @@ class AdBotEngine:
 
         user32 = ctypes.windll.user32
 
-        # 1. 找到微信窗口
-        wechat_hwnd = self._find_wechat_window()
+        # 1. 找到微信窗口（点"进入微信"后窗口可能重建，重试几次）
+        wechat_hwnd = None
+        for i in range(5):
+            wechat_hwnd = self._find_wechat_window()
+            if wechat_hwnd:
+                break
+            logger.info(f"  等待微信窗口出现... ({i+1}/5)")
+            action_wait(2.0)
         if not wechat_hwnd:
             logger.error("  微信窗口未找到，跳过")
             self.state = State.INIT
@@ -655,19 +685,17 @@ class AdBotEngine:
         logger.info(f"  激活微信窗口 (hwnd={wechat_hwnd})")
         user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
         user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-        action_wait(1.0)
+        action_wait(2.0)
 
         # 3. 用 Ctrl+F 打开搜索框
         logger.info("  按 Ctrl+F 打开搜索框...")
         import pyautogui
         pyautogui.hotkey("ctrl", "f")
-        action_wait(1.5)
+        action_wait(2.0)
 
-        # 4. 输入"简幻欢"
+        # 4. 输入"简幻欢"（用 ctypes 直接设置剪贴板，避免 clip 命令编码问题）
         logger.info("  输入'简幻欢'...")
-        # pyautogui 不支持中文输入，用剪贴板粘贴
-        import subprocess as sp
-        sp.Popen(["clip"], stdin=sp.PIPE).communicate("简幻欢".encode("utf-16-le"))
+        self._set_clipboard_text("简幻欢")
         pyautogui.hotkey("ctrl", "v")
         action_wait(2.0)
 
