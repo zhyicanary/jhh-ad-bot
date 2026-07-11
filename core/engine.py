@@ -245,6 +245,26 @@ class AdBotEngine:
         user32.EnumWindows(enum_cb(callback), 0)
         return found[0] if found else None
 
+    def _focus_wechat(self, wechat_hwnd: int | None = None) -> None:
+        """确保微信窗口在前台。用 WeChat/Weixin 关键词，不走 _ensure_focus。
+
+        _ensure_focus 用的是 _win_keyword（简幻欢|WeChatAppEx|微信），
+        不含 "Weixin"，在新版微信（标题为 Weixin）上找不到窗口。
+        """
+        if not _HAS_WIN32:
+            return
+        user32 = ctypes.windll.user32
+        hwnd = wechat_hwnd or self._wechat_hwnd
+        if hwnd and user32.IsWindow(wintypes.HWND(hwnd)):
+            fg = user32.GetForegroundWindow()
+            if fg == hwnd:
+                return  # 已在前台
+            user32.ShowWindow(wintypes.HWND(hwnd), 9)  # SW_RESTORE
+            user32.SetForegroundWindow(wintypes.HWND(hwnd))
+        else:
+            # hwnd 无效，用 focus_window 关键词兜底
+            focus_window("微信|WeChat|Weixin")
+
     def _set_clipboard_text(self, text: str) -> None:
         """用 Win32 API 直接设置剪贴板文本（避免 clip 命令编码问题）。"""
         user32 = ctypes.windll.user32
@@ -628,19 +648,23 @@ class AdBotEngine:
                     action_wait(2.0)
                     # 尝试点"进入微信"按钮
                     self._click_enter_wechat(wechat_hwnd)
-                    # 等待微信主界面加载（检测"进入微信"按钮消失）
+                    # 等待微信主界面加载（自动登录后窗口内容切换需要时间）
                     logger.info("  等待微信主界面加载...")
+                    # 先检测"进入微信"按钮是否还在，不在了说明登录完成
+                    # 但自动登录后界面仍在初始化，至少等 5 秒确保加载完
                     for wait_i in range(10):
                         action_wait(1.0)
-                        # 重新截图检测，如果"进入微信"还在说明还在登录页
                         self._target_hwnd = wechat_hwnd
                         self._update_win_rect()
                         if self._has_text(["进入微信", "Enter Weixin"]):
                             logger.info(f"  仍在登录页面，继续等待... ({wait_i+1}/10)")
                             continue
                         else:
-                            logger.info("  微信主界面已加载")
+                            logger.info("  登录按钮已消失")
                             break
+                    # 无论是否检测到按钮消失，额外等待确保主界面完整加载
+                    logger.info("  等待界面初始化完成...")
+                    action_wait(5.0)
                     self.state = State.OPEN_MINI_PROGRAM
                     return
             logger.error("  微信启动超时（30秒未出现窗口）")
@@ -667,7 +691,8 @@ class AdBotEngine:
         result = self._find_text(keywords)
         if result:
             x, y, text = result
-            self._ensure_focus()
+            # 直接设微信窗口到前台（不用 _ensure_focus，它的关键词不含 Weixin）
+            self._focus_wechat(wechat_hwnd)
             self._click_win(x, y, clicks=1, wait_after=1.0)
             logger.info(f"  已点击'{text}'")
         else:
@@ -717,33 +742,22 @@ class AdBotEngine:
         else:
             logger.info(f"  微信窗口已在前台 (hwnd={wechat_hwnd})")
 
-        # 3. 用 OCR 找搜索框并点击（新版微信 Ctrl+F 不是搜索快捷键）
-        logger.info("  查找搜索框...")
-        self._target_hwnd = wechat_hwnd
-        self._update_win_rect()
+        # 3. 确保微信前台，按 Esc 回到主界面，再 Ctrl+F
+        # （SetForegroundWindow 只拉窗口到前面，键盘焦点可能还在聊天框里，
+        #   聊天框里 Ctrl+F 不是全局搜索，所以先 Esc 退出聊天）
+        self._focus_wechat(wechat_hwnd)
+        action_wait(0.3)
 
+        logger.info("  按 Esc 回到微信主界面...")
         import pyautogui
-        search_keywords = ["搜索", "Search", "查找"]
-        search_result = self._find_text(search_keywords)
-        if search_result:
-            x, y, text = search_result
-            logger.info(f"  找到搜索框 '{text}' @ ({x},{y})，点击")
-            self._ensure_focus()
-            self._click_win(x, y, clicks=1, wait_after=2.0)
-        else:
-            # 兜底：点击微信窗口顶部中间区域（搜索框通常在那里）
-            logger.warning("  OCR 未找到搜索框，尝试点击顶部区域")
-            self._ensure_focus()
-            # 微信窗口顶部偏中间位置
-            rect = self._win_rect
-            if rect:
-                cx = rect[0] + (rect[2] - rect[0]) // 2
-                cy = rect[1] + 40  # 顶部偏下 40 像素
-                self._click_win(cx, cy, clicks=1, wait_after=2.0)
-            else:
-                logger.error("  无法获取窗口位置")
-                self.state = State.INIT
-                return
+        pyautogui.press("escape")
+        action_wait(0.5)
+        pyautogui.press("escape")
+        action_wait(0.3)
+
+        logger.info("  Ctrl+F 打开搜索框...")
+        pyautogui.hotkey("ctrl", "f")
+        action_wait(2.0)
 
         # 4. 输入"简幻欢"（用 ctypes 直接设置剪贴板）
         logger.info("  输入'简幻欢'...")
@@ -768,7 +782,7 @@ class AdBotEngine:
         if result:
             x, y, text = result
             logger.info(f"  OCR 找到'{text}' @ ({x},{y})，点击")
-            self._ensure_focus()
+            self._focus_wechat(wechat_hwnd)
             self._click_win(x, y, clicks=1, wait_after=5.0)
             logger.info("  已点击搜索结果中的'简幻欢'")
             self.state = State.INIT
