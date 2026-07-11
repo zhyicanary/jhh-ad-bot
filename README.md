@@ -1,112 +1,178 @@
-# jhh-ad-bot — 简幻欢自动化助手
+﻿# 简幻欢自动化助手 (jhh-ad-bot)
 
-自动完成简幻欢微信小程序的**签到**和**观看广告**任务，获取积分。
+自动完成简幻欢微信小程序的签到和观看广告任务，通过 UI Automation + OCR 识别界面元素，模拟鼠标操作完成全流程自动化。
 
-## 工作流程
+## 功能
 
-```
-INIT (激活窗口)
-  → DISMISS_SUBSCRIBE (关闭订阅提醒弹窗)
-  → CHECK_IN (签到)
-  → CLICK_AD (点击"观看广告")
-      ↻ 处理插屏广告弹窗(×按钮)
-  → WATCHING_AD (等待30秒)
-      ↻ 检测"暂未获得奖励"弹窗 → 点击"继续"
-  → CLOSE_AD (点击"关闭"退出广告)
-  → WAITING_REWARD (等待"加载中"→"获得积分")
-      ↑                              ↓
-      └──────── 循环直到每日上限 ──────┘
-```
+- 自动打开微信客户端（支持配置路径 / 全盘搜索）
+- 自动通过微信搜索框打开简幻欢小程序
+- 自动关闭订阅提醒弹窗
+- 自动点击签到标签导航
+- 自动点击观看广告，循环执行直到每日上限
+- 自动处理插屏弹窗广告（点 × 关闭）
+- 自动处理广告中断弹窗（点"继续"继续观看）
+- 自动等待奖励冒泡文字后继续下一轮
+- 系统托盘后台运行，GUI 配置窗口
 
-## 下载使用
+## 快速开始
 
-从 [Releases](https://github.com/zhyicanary/jhh-ad-bot/releases) 下载最新 `jhh-ad-bot.exe`：
+### 方式一：打包版（推荐）
 
-1. 新建文件夹，放入 `jhh-ad-bot.exe` 和 `config.yaml`
-2. 打开微信，进入简幻欢小程序
-3. 双击 `jhh-ad-bot.exe` 运行
-4. 保持微信窗口在前台
+1. 从 [Releases](https://github.com/zhyicanary/jhh-ad-bot/releases) 下载 `jhh-ad-bot.exe`
+2. 放到一个空文件夹中
+3. 双击运行（会弹出 UAC 请求管理员权限）
+4. 首次运行会在 exe 同目录生成 `config.yaml`，按需修改
+5. 右下角托盘图标右键 → "启动自动化"
 
-> 无需模板截图，全部通过 OCR 文字识别定位按钮。
-
-## 从源码运行
+### 方式二：源码运行
 
 ```bash
+# 安装依赖
 pip install -r requirements.txt
-python main.py                    # 持续运行
-python main.py --once             # 只执行一轮
-python main.py -v                 # 详细日志
+
+# CLI 模式
+python main.py
+
+# 托盘模式
+python main.py --tray
+
+# 只执行一轮
+python main.py --once
+
+# 请求管理员权限
+python main.py --admin
 ```
 
-## 配置说明
+## 配置
 
-编辑 `config.yaml` 调整参数：
+首次运行自动在 exe 同目录（或源码根目录）生成 `config.yaml`：
 
 ```yaml
-# 目标窗口
-window:
-  title_keyword: "简幻欢|WeChatAppEx|微信"
-  auto_focus: true
+# 微信配置
+wechat:
+  path: ""    # WeChat.exe 路径，留空则自动搜索
 
 # 时间控制
 timing:
-  ad_watch_seconds: 32    # 广告观看时长(秒)
-  ad_click_wait: 2        # 点击后等待(秒)
-  check_interval: 2       # 检测间隔(秒)
+  ad_watch_seconds: 32    # 广告观看时长（秒）
+  check_interval: 2       # 检测间隔（秒）
 
-# OCR 关键词（可按需调整）
+# 关键词
 matching:
-  ad_keywords: ["观看广告", "看广告"]
-  close_keywords: ["关闭", "关闭广告"]
-  popup_close_keywords: ["×", "X"]
-  max_ad_not_found: 5     # 连续未找到广告多少次后停止
+  ad_keywords: ["观看广告"]
+  close_keywords: ["关闭"]
+  continue_keywords: ["继续"]
+  limit_keywords: ["到达上限", "今日上限"]
 
-# 循环
+# 循环控制
 loop:
-  max_rounds: 0           # 0=无限
+  max_rounds: 0    # 0=无限循环
+```
+
+也可以通过托盘右键菜单 → "配置" 在 GUI 窗口中修改。
+
+## 状态机流程
+
+程序运行时按以下状态顺序执行：
+
+```
+OPEN_WECHAT          打开微信客户端
+       ↓
+OPEN_MINI_PROGRAM    搜索并打开简幻欢小程序
+       ↓
+INIT                 激活目标窗口
+       ↓
+DISMISS_SUBSCRIBE    关闭订阅提醒弹窗
+       ↓
+CHECK_IN             点击"签到"标签导航
+       ↓
+CLICK_AD             点击"观看广告"
+       ↓
+DISMISS_INTERSTITIAL 处理插屏弹窗广告（点 ×）
+       ↓
+WATCHING_AD          观看广告（等待 30s）
+       ↓               ↑ 中断弹窗点"继续"
+CLOSE_AD             关闭广告
+       ↓
+WAITING_REWARD       等待"加载中"+"获得签到奖励"
+       ↓
+CLICK_AD             ← 循环回到观看广告
+       ↓
+STOP                 检测到"今日上限"，退出
 ```
 
 ## 技术架构
 
-| 模块 | 作用 |
-|------|------|
-| `core/engine.py` | 8状态有限状态机，驱动完整自动化流程 |
-| `core/ocr.py` | RapidOCR 文字识别，定位屏幕上的按钮文字 |
-| `core/action.py` | Win32 SendInput 鼠标模拟 + DPI 感知 + 轨迹移动 |
-| `core/capture.py` | mss 高性能屏幕截图 |
+| 模块 | 技术 | 说明 |
+|------|------|------|
+| `core/engine.py` | 11 状态有限状态机 | 驱动完整自动化流程 |
+| `core/ocr.py` | RapidOCR (ONNX Runtime) | 离线文字识别，精确匹配优先 |
+| `core/action.py` | Win32 SendInput | 鼠标轨迹模拟，DPI 感知 |
+| `core/capture.py` | PrintWindow API | 窗口专属截图（被遮挡也能截取） |
+| `core/uia.py` | UI Automation | 无障碍接口直接调用 InvokePattern |
+| `tray.py` | pystray + tkinter | 系统托盘 + GUI 配置窗口 |
 
-### 关键设计
+### 三层点击策略
 
-- **全 OCR 识别**：不依赖模板图片，通过文字识别定位所有 UI 元素
-- **DPI 感知**：启用 Per-Monitor DPI Awareness，截图与光标坐标系一致
-- **鼠标轨迹模拟**：ease-out cubic 缓动移动，避免瞬移被检测忽略
-- **点击验证**：关键步骤点击后截图验证，失败自动重试
-- **插屏弹窗处理**：点击"观看广告"后检测插屏弹窗，自动关闭×再重新点击
-- **广告中断保护**：30s观看期间检测"暂未获得奖励"弹窗，自动点击"继续"
-- **每日上限检测**：连续多次找不到"观看广告"按钮时自动停止
+1. **UIA 名称搜索 + InvokePattern** — 对 Chromium 窗口最可靠，不需要元素可见
+2. **OCR 定位 + ControlFromPoint** — 对无 accessible name 的元素
+3. **OCR 坐标点击** — SendInput 模拟鼠标，兜底方案
 
-## 构建 exe
-
-推送 `v*` 标签触发 GitHub Actions 自动打包：
+## 打包
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+# Windows
+build.bat
+
+# 或手动打包
+pyinstaller --onefile --name "jhh-ad-bot" --uac-admin \
+    --add-data "config.yaml;." \
+    --collect-all cv2 --collect-all rapidocr_onnxruntime \
+    --collect-all uiautomation --collect-all comtypes --collect-all pystray \
+    main.py
 ```
+
+推送 `v*` 标签会触发 GitHub Actions 自动打包并发布 Release。
+
+## 托盘菜单
+
+| 菜单项 | 功能 |
+|--------|------|
+| 启动自动化 | 后台线程运行引擎，图标变绿 |
+| 只执行一轮 | 跑一轮后自动停止 |
+| 停止 | 停止引擎，图标变灰 |
+| 配置 | 弹出 GUI 窗口编辑配置 |
+| 打开微信 | 手动打开微信客户端 |
+| 查看日志 | 弹窗显示最近 100 行日志 |
+| 退出 | 停止引擎并退出 |
+
+托盘图标颜色：灰色=待机，绿色=运行中，红色=错误。
 
 ## 项目结构
 
 ```
 jhh-ad-bot/
-├── main.py                  # 入口
-├── config.yaml              # 配置文件
-├── requirements.txt         # Python 依赖
 ├── core/
-│   ├── engine.py            # 8状态机引擎
-│   ├── ocr.py               # OCR 文字识别
-│   ├── capture.py           # 屏幕截图
-│   ├── action.py            # 鼠标/窗口操控
-│   └── vision.py            # OpenCV 模板匹配(备用)
+│   ├── engine.py          # 状态机引擎
+│   ├── ocr.py             # OCR 文字识别
+│   ├── capture.py         # 屏幕截图
+│   ├── action.py          # 鼠标/窗口操控
+│   └── uia.py             # UI Automation 接口
+├── main.py                # 入口文件
+├── tray.py                # 系统托盘应用
+├── config.yaml            # 配置文件
+├── requirements.txt       # Python 依赖
+├── build.bat              # Windows 打包脚本
 └── .github/workflows/
-    └── build.yml            # 自动打包工作流
+    └── build.yml          # GitHub Actions 自动打包
 ```
+
+## 依赖
+
+- Python 3.10+
+- Windows 10/11
+- opencv-python, rapidocr-onnxruntime, uiautomation, pystray 等
+
+## 许可
+
+私有项目，未公开发布。
