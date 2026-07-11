@@ -227,8 +227,7 @@ class AdBotEngine:
         found = []
 
         def callback(hwnd, _lparam):
-            if not user32.IsWindowVisible(hwnd):
-                return True
+            # 不检查 IsWindowVisible — 微信最小化到托盘时窗口隐藏但仍然存在
             length = user32.GetWindowTextLengthW(hwnd) + 1
             if length <= 1:
                 return True
@@ -524,9 +523,11 @@ class AdBotEngine:
 
         if wechat_hwnd:
             logger.info(f"  微信已在运行 (hwnd={wechat_hwnd})，激活窗口")
-            user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
+            # SW_RESTORE = 9，从最小化/托盘恢复窗口
+            user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)
+            action_wait(0.5)
             user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-            action_wait(2.0)
+            action_wait(3.0)
             self.state = State.OPEN_MINI_PROGRAM
             return
 
@@ -618,13 +619,25 @@ class AdBotEngine:
                 wechat_hwnd = self._find_wechat_window()
                 if wechat_hwnd:
                     logger.info(f"  微信窗口已出现 (hwnd={wechat_hwnd})")
+                    # 显示并激活窗口
+                    user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
                     user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
                     action_wait(2.0)
-                    # 点击"进入微信"按钮（登录页面）
+                    # 尝试点"进入微信"按钮
                     self._click_enter_wechat(wechat_hwnd)
-                    # 等待微信主界面加载完成
+                    # 等待微信主界面加载（检测"进入微信"按钮消失）
                     logger.info("  等待微信主界面加载...")
-                    action_wait(5.0)
+                    for wait_i in range(10):
+                        action_wait(1.0)
+                        # 重新截图检测，如果"进入微信"还在说明还在登录页
+                        self._target_hwnd = wechat_hwnd
+                        self._update_win_rect()
+                        if self._has_text(["进入微信", "Enter Weixin"]):
+                            logger.info(f"  仍在登录页面，继续等待... ({wait_i+1}/10)")
+                            continue
+                        else:
+                            logger.info("  微信主界面已加载")
+                            break
                     self.state = State.OPEN_MINI_PROGRAM
                     return
             logger.error("  微信启动超时（30秒未出现窗口）")
