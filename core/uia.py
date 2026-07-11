@@ -57,6 +57,22 @@ _CONTROL_PRIORITY = {
 _DEFAULT_PRIORITY = 5
 
 
+def _safe_name(elem) -> str:
+    """安全获取元素名称，COM 调用失败时返回空字符串。"""
+    try:
+        return elem.Name or ""
+    except Exception:
+        return ""
+
+
+def _safe_ctype(elem) -> str:
+    """安全获取控件类型名，COM 调用失败时返回空字符串。"""
+    try:
+        return elem.ControlTypeName or ""
+    except Exception:
+        return ""
+
+
 def is_available() -> bool:
     """UIA 是否可用。"""
     return _UIA_AVAILABLE
@@ -160,34 +176,30 @@ def find_and_invoke(hwnd: int, name: str, exact: bool = False) -> bool:
         logger.info(f"UIA: 未找到元素包含 '{name}'")
         return False
 
-    # 按控件类型优先级 + 名称长度排序
-    matched.sort(key=lambda e: (_control_priority(e), len(e.Name or "")))
+    # 按控件类型优先级 + 名称长度排序（精确匹配优先）
+    matched.sort(key=lambda e: (_control_priority(e), len(_safe_name(e))))
 
     for i, e in enumerate(matched):
-        logger.info(f"  匹配#{i}: '{e.Name}' ({e.ControlTypeName}) prio={_control_priority(e)}")
+        logger.info(f"  匹配#{i}: '{_safe_name(e)}' ({_safe_ctype(e)}) prio={_control_priority(e)}")
 
     # 策略1: 优先尝试 InvokePattern
     for elem in matched:
         if _try_invoke(elem):
-            logger.info(f"UIA Invoke: '{elem.Name}' ({elem.ControlTypeName})")
+            logger.info(f"UIA Invoke: '{_safe_name(elem)}' ({_safe_ctype(elem)})")
             return True
 
     # 策略2: 尝试 LegacyIAccessiblePattern
     # 对非 TextControl 直接调用 DoDefaultAction（不检查 DefaultAction）
     # 对 TextControl 只在有 DefaultAction 时才调用（避免误操作描述文字）
     for elem in matched:
-        ctype = ""
-        try:
-            ctype = elem.ControlTypeName
-        except Exception:
-            pass
+        ctype = _safe_ctype(elem)
         if ctype == "TextControl":
             if _try_legacy_safe(elem):
-                logger.info(f"UIA Legacy(safe): '{elem.Name}' ({ctype})")
+                logger.info(f"UIA Legacy(safe): '{_safe_name(elem)}' ({ctype})")
                 return True
         else:
             if _try_legacy(elem):
-                logger.info(f"UIA Legacy: '{elem.Name}' ({ctype})")
+                logger.info(f"UIA Legacy: '{_safe_name(elem)}' ({ctype})")
                 return True
 
     # 策略3: 尝试 Click（模拟鼠标）
@@ -195,15 +207,11 @@ def find_and_invoke(hwnd: int, name: str, exact: bool = False) -> bool:
     # Click() 会返回 True 但实际无效，导致误判成功。
     # 让它回退到 _ocr_and_invoke (ControlFromPoint) 去找真正的按钮。
     for elem in matched:
-        ctype = ""
-        try:
-            ctype = elem.ControlTypeName
-        except Exception:
-            pass
+        ctype = _safe_ctype(elem)
         if ctype == "TextControl":
             continue  # 跳过 TextControl，让上层走 ControlFromPoint
         if _try_click(elem):
-            logger.info(f"UIA Click: '{elem.Name}' ({ctype})")
+            logger.info(f"UIA Click: '{_safe_name(elem)}' ({ctype})")
             return True
 
     logger.warning(f"UIA: {len(matched)} 个匹配元素均无法调用")
@@ -238,8 +246,8 @@ def invoke_at_point(screen_x: int, screen_y: int) -> bool:
         logger.debug(f"ControlFromPoint({screen_x},{screen_y}) 返回 None")
         return False
 
-    elem_name = elem.Name or ""
-    elem_type = elem.ControlTypeName
+    elem_name = _safe_name(elem)
+    elem_type = _safe_ctype(elem)
     logger.info(f"UIA Point: ({screen_x},{screen_y}) -> '{elem_name}' ({elem_type})")
 
     # 收集从当前元素到根的祖先链（最多 10 层）
@@ -262,8 +270,8 @@ def invoke_at_point(screen_x: int, screen_y: int) -> bool:
         if _is_system_button(a):
             continue
         if _try_invoke(a):
-            name = a.Name or ""
-            logger.info(f"UIA Point Invoke: '{name}' ({a.ControlTypeName})")
+            name = _safe_name(a)
+            logger.info(f"UIA Point Invoke: '{name}' ({_safe_ctype(a)})")
             return True
 
     # 策略2: 尝试 LegacyIAccessiblePattern
@@ -307,7 +315,7 @@ def exists(hwnd: int, name: str) -> bool:
         if found[0] or depth > 25:
             return
         if not _is_system_button(elem):
-            elem_name = elem.Name or ""
+            elem_name = _safe_name(elem)
             if name in elem_name and not _is_description_text(elem_name, name, False):
                 found[0] = True
                 return
@@ -335,7 +343,7 @@ def _find_elements_by_name(win_elem, name: str, exact: bool) -> list:
         if depth > 25 or len(matched) >= 10:
             return
         if not _is_system_button(elem):
-            elem_name = elem.Name or ""
+            elem_name = _safe_name(elem)
             if exact:
                 if elem_name == name:
                     matched.append(elem)
@@ -373,7 +381,7 @@ def _try_legacy_safe(elem) -> bool:
         if pat:
             default_action = pat.CurrentDefaultAction
             if default_action and default_action.strip():
-                logger.debug(f"  Legacy default action: '{default_action}' on '{elem.Name}'")
+                logger.debug(f"  Legacy default action: '{default_action}' on '{_safe_name(elem)}'")
                 pat.DoDefaultAction()
                 return True
     except Exception:
