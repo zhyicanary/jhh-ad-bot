@@ -739,10 +739,10 @@ class AdBotEngine:
         keywords = ["进入微信", "Enter Weixin", "登录", "Login"]
         for kw in keywords:
             if uia_mod.exists(wechat_hwnd, kw):
-                result = uia_mod.find_and_invoke(wechat_hwnd, kw, wait_after=3.0)
-                if result:
-                    logger.info(f"  已点击'{kw}'")
-                    return
+                uia_mod.find_and_invoke(wechat_hwnd, kw)
+                logger.info(f"  已点击'{kw}'")
+                action_wait(3.0)
+                return
         # UIA 没找到，用 OCR + 坐标点击
         self._target_hwnd = wechat_hwnd
         self._update_win_rect()
@@ -838,12 +838,11 @@ class AdBotEngine:
         # 先用 UIA 搜索
         from core import uia as uia_mod
         if uia_mod.exists(wechat_hwnd, "简幻欢"):
-            result = uia_mod.find_and_invoke(wechat_hwnd, "简幻欢", wait_after=5.0)
-            if result:
-                logger.info("  已点击搜索结果中的'简幻欢'")
-                action_wait(5.0)
-                self.state = State.INIT
-                return
+            uia_mod.find_and_invoke(wechat_hwnd, "简幻欢")
+            logger.info("  已点击搜索结果中的'简幻欢'")
+            action_wait(5.0)
+            self.state = State.INIT
+            return
 
         # UIA 没找到，用 OCR + 坐标点击
         result = self._find_and_click(["简幻欢"], wait_after=5.0)
