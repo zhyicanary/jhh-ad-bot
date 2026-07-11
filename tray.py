@@ -256,6 +256,122 @@ class TrayApp:
         if icon:
             icon.stop()
 
+    def _on_config(self, icon=None, item=None):
+        """打开配置窗口。"""
+        import threading
+        thread = threading.Thread(target=self._show_config_dialog, daemon=True)
+        thread.start()
+
+    def _show_config_dialog(self):
+        """显示配置编辑窗口（tkinter）。"""
+        try:
+            import tkinter as tk
+            from tkinter import ttk, filedialog, messagebox
+        except ImportError:
+            if _HAS_WIN32:
+                ctypes.windll.user32.MessageBoxW(
+                    0, "tkinter 未安装，无法显示配置窗口", "错误", 0x10
+                )
+            return
+
+        root = tk.Tk()
+        root.title("简幻欢自动化 - 配置")
+        root.geometry("500x450")
+        root.resizable(False, False)
+
+        # 读取当前配置
+        cfg = self.config
+
+        # ── 微信路径 ──
+        frm_wechat = ttk.LabelFrame(root, text="微信配置", padding=10)
+        frm_wechat.pack(fill="x", padx=10, pady=5)
+
+        wechat_path = tk.StringVar(value=cfg.get("wechat", {}).get("path", ""))
+        ttk.Label(frm_wechat, text="WeChat.exe 路径:").grid(row=0, column=0, sticky="w")
+        entry_wechat = ttk.Entry(frm_wechat, textvariable=wechat_path, width=40)
+        entry_wechat.grid(row=0, column=1, padx=5)
+
+        def browse_wechat():
+            path = filedialog.askopenfilename(
+                title="选择 WeChat.exe",
+                filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")]
+            )
+            if path:
+                wechat_path.set(path)
+
+        ttk.Button(frm_wechat, text="浏览...", command=browse_wechat).grid(row=0, column=2)
+
+        # ── 时间控制 ──
+        frm_timing = ttk.LabelFrame(root, text="时间控制（秒）", padding=10)
+        frm_timing.pack(fill="x", padx=10, pady=5)
+
+        ad_watch = tk.StringVar(value=str(cfg.get("timing", {}).get("ad_watch_seconds", 32)))
+        ttk.Label(frm_timing, text="广告观看时长:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        ttk.Entry(frm_timing, textvariable=ad_watch, width=10).grid(row=0, column=1, pady=2)
+        ttk.Label(frm_timing, text="（建议32秒）").grid(row=0, column=2, sticky="w")
+
+        check_interval = tk.StringVar(value=str(cfg.get("timing", {}).get("check_interval", 2)))
+        ttk.Label(frm_timing, text="检测间隔:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        ttk.Entry(frm_timing, textvariable=check_interval, width=10).grid(row=1, column=1, pady=2)
+
+        # ── 关键词 ──
+        frm_kw = ttk.LabelFrame(root, text="关键词配置", padding=10)
+        frm_kw.pack(fill="x", padx=10, pady=5)
+
+        kw_ad = tk.StringVar(value="|".join(cfg.get("matching", {}).get("ad_keywords", ["观看广告"])))
+        ttk.Label(frm_kw, text="观看广告:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        ttk.Entry(frm_kw, textvariable=kw_ad, width=30).grid(row=0, column=1, pady=2)
+
+        kw_close = tk.StringVar(value="|".join(cfg.get("matching", {}).get("close_keywords", ["关闭"])))
+        ttk.Label(frm_kw, text="关闭广告:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        ttk.Entry(frm_kw, textvariable=kw_close, width=30).grid(row=1, column=1, pady=2)
+
+        kw_continue = tk.StringVar(value="|".join(cfg.get("matching", {}).get("continue_keywords", ["继续"])))
+        ttk.Label(frm_kw, text="继续观看:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        ttk.Entry(frm_kw, textvariable=kw_continue, width=30).grid(row=2, column=1, pady=2)
+
+        kw_limit = tk.StringVar(value="|".join(cfg.get("matching", {}).get("limit_keywords", ["到达上限", "今日上限"])))
+        ttk.Label(frm_kw, text="今日上限:").grid(row=3, column=0, sticky="w", padx=5, pady=2)
+        ttk.Entry(frm_kw, textvariable=kw_limit, width=30).grid(row=3, column=1, pady=2)
+
+        # ── 循环 ──
+        frm_loop = ttk.LabelFrame(root, text="循环控制", padding=10)
+        frm_loop.pack(fill="x", padx=10, pady=5)
+
+        max_rounds = tk.StringVar(value=str(cfg.get("loop", {}).get("max_rounds", 0)))
+        ttk.Label(frm_loop, text="循环次数 (0=无限):").grid(row=0, column=0, sticky="w", padx=5)
+        ttk.Entry(frm_loop, textvariable=max_rounds, width=10).grid(row=0, column=1)
+
+        # ── 按钮 ──
+        frm_btn = ttk.Frame(root)
+        frm_btn.pack(fill="x", padx=10, pady=10)
+
+        def save_config():
+            """保存配置到 config.yaml。"""
+            try:
+                cfg.setdefault("wechat", {})["path"] = wechat_path.get()
+                cfg.setdefault("timing", {})["ad_watch_seconds"] = int(ad_watch.get())
+                cfg.setdefault("timing", {})["check_interval"] = float(check_interval.get())
+                cfg.setdefault("matching", {})["ad_keywords"] = [k.strip() for k in kw_ad.get().split("|") if k.strip()]
+                cfg.setdefault("matching", {})["close_keywords"] = [k.strip() for k in kw_close.get().split("|") if k.strip()]
+                cfg.setdefault("matching", {})["continue_keywords"] = [k.strip() for k in kw_continue.get().split("|") if k.strip()]
+                cfg.setdefault("matching", {})["limit_keywords"] = [k.strip() for k in kw_limit.get().split("|") if k.strip()]
+                cfg.setdefault("loop", {})["max_rounds"] = int(max_rounds.get())
+
+                with open(self.config_path, "w", encoding="utf-8") as f:
+                    yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+                self.config = cfg
+                messagebox.showinfo("成功", "配置已保存！")
+                root.destroy()
+            except Exception as e:
+                messagebox.showerror("错误", f"保存失败: {e}")
+
+        ttk.Button(frm_btn, text="保存", command=save_config).pack(side="right", padx=5)
+        ttk.Button(frm_btn, text="取消", command=root.destroy).pack(side="right", padx=5)
+
+        root.mainloop()
+
     def _run_engine(self):
         """在子线程中运行引擎。"""
         try:
@@ -290,6 +406,7 @@ class TrayApp:
             self.pystray.MenuItem("只执行一轮", self._on_start_once, enabled=lambda item: not self.is_running),
             self.pystray.MenuItem("停止", self._on_stop, enabled=lambda item: self.is_running),
             self.pystray.Menu.SEPARATOR,
+            self.pystray.MenuItem("配置", self._on_config),
             self.pystray.MenuItem("打开微信", self._on_open_wechat),
             self.pystray.MenuItem("查看日志", self._on_show_log),
             self.pystray.Menu.SEPARATOR,

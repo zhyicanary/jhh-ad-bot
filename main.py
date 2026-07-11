@@ -126,13 +126,21 @@ def main():
     parser.add_argument("--once", action="store_true", help="只执行一轮")
     parser.add_argument("-v", "--verbose", action="store_true", help="详细日志")
     parser.add_argument("--tray", action="store_true", help="系统托盘模式")
+    parser.add_argument("--cli", action="store_true", help="强制命令行模式（打包后默认托盘）")
     parser.add_argument("--admin", action="store_true", help="请求管理员权限")
     args = parser.parse_args()
 
+    # 打包后默认托盘模式，除非显式指定 --cli
+    use_tray = args.tray
+    if hasattr(sys, "frozen") and not args.cli:
+        use_tray = True
+
     # 管理员权限
-    if args.admin and os.name == "nt" and not is_admin():
-        run_as_admin()
-        return
+    if os.name == "nt" and not is_admin():
+        # 打包后自动请求管理员权限
+        if hasattr(sys, "frozen") or args.admin:
+            run_as_admin()
+            return
 
     # 日志配置
     level = logging.DEBUG if args.verbose else logging.INFO
@@ -156,7 +164,7 @@ def main():
         config.setdefault("loop", {})["max_rounds"] = 1
 
     # 选择运行模式
-    if args.tray:
+    if use_tray:
         run_tray(config, config_path)
     else:
         run_cli(config)
