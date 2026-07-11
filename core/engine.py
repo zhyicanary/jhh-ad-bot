@@ -590,7 +590,9 @@ class AdBotEngine:
                     action_wait(2.0)
                     # 点击"进入微信"按钮（登录页面）
                     self._click_enter_wechat(wechat_hwnd)
-                    action_wait(3.0)
+                    # 等待微信主界面加载完成
+                    logger.info("  等待微信主界面加载...")
+                    action_wait(5.0)
                     self.state = State.OPEN_MINI_PROGRAM
                     return
             logger.error("  微信启动超时（30秒未出现窗口）")
@@ -604,18 +606,22 @@ class AdBotEngine:
     def _click_enter_wechat(self, wechat_hwnd: int) -> None:
         """点击微信登录页面的"进入微信"按钮。
 
-        微信是原生窗口，UIA Invoke 可能无效，
+        微信是原生窗口，UIA Invoke 返回成功但实际无效，
         直接用 OCR 找按钮位置然后 SendInput 坐标点击。
+        跳过 _find_and_click 的 UIA 策略，避免浪费时间。
         """
         logger.info("  查找'进入微信'按钮...")
         self._target_hwnd = wechat_hwnd
         self._update_win_rect()
 
         keywords = ["进入微信", "Enter Weixin", "登录", "Login"]
-        # 直接用 OCR + 坐标点击（微信原生窗口，UIA Invoke 不可靠）
-        result = self._find_and_click(keywords, wait_after=3.0)
+        # 直接 OCR 定位 + 坐标点击（不走 UIA，微信原生窗口 UIA 无效）
+        result = self._find_text(keywords)
         if result:
-            logger.info(f"  已点击'{result[2]}'")
+            x, y, text = result
+            self._ensure_focus()
+            self._click_win(x, y, clicks=1, wait_after=1.0)
+            logger.info(f"  已点击'{text}'")
         else:
             logger.warning("  未找到'进入微信'按钮，可能已自动登录")
 
