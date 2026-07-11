@@ -52,6 +52,7 @@ if _HAS_WIN32:
 
 
 class State(Enum):
+    OPEN_WECHAT = auto()
     INIT = auto()
     DISMISS_SUBSCRIBE = auto()
     CHECK_IN = auto()
@@ -78,7 +79,7 @@ class AdBotEngine:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.state = State.INIT
+        self.state = State.OPEN_WECHAT
         self.stats = Stats()
         self._stop_requested = False
         self._watch_start: float = 0.0
@@ -154,6 +155,7 @@ class AdBotEngine:
 
     def _tick(self) -> None:
         handlers = {
+            State.OPEN_WECHAT: self._handle_open_wechat,
             State.INIT: self._handle_init,
             State.DISMISS_SUBSCRIBE: self._handle_dismiss_subscribe,
             State.CHECK_IN: self._handle_check_in,
@@ -563,6 +565,115 @@ class AdBotEngine:
     # ──────────────────────────────────────────────
     # 状态处理
     # ──────────────────────────────────────────────
+
+    def _handle_open_wechat(self) -> None:
+        """打开微信客户端。
+
+        1. 检查微信是否已在运行（枚举窗口找"微信"/"WeChat"）
+        2. 如果在运行，激活窗口
+        3. 如果没运行，从常见路径和注册表查找 WeChat.exe 并启动
+        4. 等待微信窗口出现
+        """
+        logger.info("[打开微信] 检查微信是否在运行...")
+
+        if not _HAS_WIN32:
+            logger.error("  非 Windows 平台，跳过")
+            self.state = State.INIT
+            return
+
+        user32 = ctypes.windll.user32
+        wechat_hwnd = None
+
+        # 查找微信窗口
+        def find_wechat():
+            nonlocal wechat_hwnd
+            found = []
+
+            def callback(hwnd, _lparam):
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+                length = user32.GetWindowTextLengthW(hwnd) + 1
+                if length <= 1:
+                    return True
+                buf = ctypes.create_unicode_buffer(length)
+                user32.GetWindowTextW(hwnd, buf, length)
+                title = buf.value
+                for kw in ["微信", "WeChat"]:
+                    if kw in title:
+                        found.append(hwnd)
+                        break
+                return True
+
+            enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            user32.EnumWindows(enum_cb(callback), 0)
+            wechat_hwnd = found[0] if found else None
+
+        find_wechat()
+
+        if wechat_hwnd:
+            logger.info(f"  微信已在运行 (hwnd={wechat_hwnd})，激活窗口")
+            user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
+            user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
+            action_wait(2.0)
+            self.state = State.INIT
+            return
+
+        # 微信没运行，启动它
+        logger.info("  微信未运行，尝试启动...")
+        import os
+        import subprocess
+
+        wechat_paths = [
+            os.path.expandvars(r"%PROGRAMFILES%\Tencent\WeChat\WeChat.exe"),
+            os.path.expandvars(r"%PROGRAMFILES(X86)%\Tencent\WeChat\WeChat.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Tencent\WeChat\WeChat.exe"),
+        ]
+
+        wechat_exe = None
+        for path in wechat_paths:
+            if os.path.exists(path):
+                wechat_exe = path
+                break
+
+        # 从注册表查找
+        if wechat_exe is None:
+            try:
+                import winreg
+                for hive in [winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE]:
+                    for subkey in [r"SOFTWARE\Tencent\WeChat", r"SOFTWARE\WOW6432Node\Tencent\WeChat"]:
+                        try:
+                            key = winreg.OpenKey(hive, subkey)
+                            install_path, _ = winreg.QueryValueEx(key, "InstallPath")
+                            winreg.CloseKey(key)
+                            exe_path = os.path.join(install_path, "WeChat.exe")
+                            if os.path.exists(exe_path):
+                                wechat_exe = exe_path
+                                break
+                        except (FileNotFoundError, OSError):
+                            pass
+                    if wechat_exe:
+                        break
+            except ImportError:
+                pass
+
+        if wechat_exe:
+            logger.info(f"  启动微信: {wechat_exe}")
+            subprocess.Popen([wechat_exe])
+            # 等待微信窗口出现（最多 15 秒）
+            for i in range(30):
+                action_wait(0.5)
+                find_wechat()
+                if wechat_hwnd:
+                    logger.info(f"  微信已启动 (hwnd={wechat_hwnd})")
+                    user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
+                    action_wait(2.0)
+                    self.state = State.INIT
+                    return
+            logger.error("  微信启动超时（15秒未出现窗口）")
+            self.state = State.INIT  # 继续尝试找简幻欢窗口
+        else:
+            logger.error("  未找到微信安装路径，请手动打开微信")
+            self.state = State.INIT
 
     def _handle_init(self) -> None:
         logger.info("[INIT] 激活窗口...")
