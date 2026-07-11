@@ -320,37 +320,6 @@ def exists(hwnd: int, name: str) -> bool:
     return found[0]
 
 
-def list_elements(hwnd: int, max_count: int = 50) -> list[tuple[str, str, bool]]:
-    """列出窗口中所有有名称的 UIA 元素（调试用）。"""
-    if not _UIA_AVAILABLE:
-        return []
-
-    win = _get_window(hwnd)
-    if win is None:
-        return []
-
-    result = []
-
-    def walk(elem, depth=0):
-        if len(result) >= max_count or depth > 25:
-            return
-        name = elem.Name or ""
-        ctype = elem.ControlTypeName
-        if name.strip():
-            has_invoke = False
-            try:
-                pat = elem.GetInvokePattern()
-                has_invoke = pat is not None
-            except Exception:
-                pass
-            result.append((name, ctype, has_invoke))
-        for child in elem.GetChildren():
-            walk(child, depth + 1)
-
-    walk(win)
-    return result
-
-
 # ── 内部方法 ──
 
 def _find_elements_by_name(win_elem, name: str, exact: bool) -> list:

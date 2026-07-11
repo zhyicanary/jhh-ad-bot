@@ -5,7 +5,6 @@
 """
 
 import logging
-import sys
 
 logger = logging.getLogger(__name__)
 
@@ -144,15 +143,3 @@ def find_text(
                 return (cx, cy, target)
 
     return None
-
-
-def find_close_button(
-    screen_bgr,
-    region: tuple[int, int, int, int] | None = None,
-) -> tuple[int, int, str] | None:
-    """专门在截图中查找广告关闭按钮文字。"""
-    return find_text(
-        screen_bgr,
-        targets=["关闭", "×", "跳过", "关闭广告"],
-        region=region,
-    )

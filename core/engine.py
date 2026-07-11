@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional, Tuple
 logging.getLogger("uiautomation").setLevel(logging.WARNING)
 
 from . import ocr, uia
-from .action import click, focus_window, is_window_in_focus, set_target
+from .action import click, focus_window, is_window_in_focus
 from .action import wait as action_wait
 from .capture import capture_window, screenshot
 
@@ -103,8 +103,6 @@ class AdBotEngine:
         m = config.get("matching", {})
         self._kw_subscribe = m.get("subscribe_keywords", ["订阅提醒", "好的", "不再提示", "不再提醒"])
         self._kw_checkin = m.get("checkin_keywords", ["签到"])
-        self._kw_checkin_action = m.get("checkin_action_keywords", ["开始签到"])
-        self._kw_ad_page = m.get("ad_page_keywords", ["积分"])
         self._kw_ad = m.get("ad_keywords", ["观看广告", "看广告"])
         self._kw_close = m.get("close_keywords", ["关闭", "关闭广告"])
         self._kw_interrupt = m.get("interrupt_keywords", ["暂未获得奖励", "继续", "放弃"])
@@ -112,8 +110,6 @@ class AdBotEngine:
         self._kw_reward = m.get("reward_keywords", ["获得观看积分", "积分成功", "观看积分"])
         self._kw_loading = m.get("loading_keywords", ["加载中"])
         self._kw_limit = m.get("limit_keywords", ["次数已用完", "已达上限", "已用完", "今日上限"])
-        self._kw_popup_x = m.get("popup_close_keywords", ["×", "X", "✕", "✖"])
-        self._kw_dismiss = m.get("dismiss_keywords", ["确定", "知道了", "好的"])
         self._max_ad_not_found = m.get("max_ad_not_found", 5)
 
         loop_cfg = config.get("loop", {})
@@ -217,6 +213,37 @@ class AdBotEngine:
                         break
 
         return found
+
+    def _find_wechat_window(self) -> int | None:
+        """枚举窗口找到微信的 hwnd。
+
+        支持新版微信 Weixin、旧版 WeChat、中文微信。
+        """
+        if not _HAS_WIN32:
+            return None
+
+        user32 = ctypes.windll.user32
+        wechat_keywords = ["微信", "WeChat", "Weixin"]
+        found = []
+
+        def callback(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd) + 1
+            if length <= 1:
+                return True
+            buf = ctypes.create_unicode_buffer(length)
+            user32.GetWindowTextW(hwnd, buf, length)
+            title = buf.value
+            for kw in wechat_keywords:
+                if kw in title:
+                    found.append(hwnd)
+                    break
+            return True
+
+        enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows(enum_cb(callback), 0)
+        return found[0] if found else None
 
     def _update_win_rect(self) -> None:
         """更新目标窗口的屏幕坐标。"""
@@ -441,131 +468,6 @@ class AdBotEngine:
             action_wait(interval)
         return False
 
-    def _wait_for_text_gone(
-        self, keywords: list[str], timeout: float = 10, interval: float = 1.0, region=None
-    ) -> bool:
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if self._find_text(keywords, region=region) is None:
-                return True
-            action_wait(interval)
-        return False
-
-    def _scroll_down(self, clicks: int = 5) -> None:
-        """在窗口中心向下滚动鼠标滚轮。
-
-        使用 SendInput + MOUSEEVENTF_WHEEL（对 Chromium 有效），
-        pyautogui.scroll 对 Chromium 窗口无效。
-        """
-        self._send_scroll(clicks * -120 * 3)  # 负值=向下
-
-    def _scroll_up(self, clicks: int = 5) -> None:
-        """在窗口中心向上滚动鼠标滚轮。"""
-        self._send_scroll(clicks * 120 * 3)  # 正值=向上
-
-    def _send_scroll(self, wheel_delta: int) -> None:
-        """通过 SendInput 发送鼠标滚轮事件。
-
-        Args:
-            wheel_delta: 正值向上滚，负值向下滚（标准 Windows WHEEL_DELTA=120）
-        """
-        if not self._target_hwnd:
-            return
-        self._update_win_rect()
-        ox, oy, w, h = self._win_rect
-        cx = ox + w // 2
-        cy = oy + h // 2
-
-        direction = "向下" if wheel_delta < 0 else "向上"
-        logger.info(f"  滚动{direction}: delta={wheel_delta} @ screen({cx},{cy})")
-
-        import ctypes
-        user32 = ctypes.windll.user32
-
-        # 移动鼠标到窗口中心
-        user32.SetCursorPos(cx, cy)
-        action_wait(0.1)
-
-        # SendInput 鼠标滚轮
-        MOUSEEVENTF_WHEEL = 0x0800
-        INPUT_MOUSE = 0
-
-        class MOUSEINPUT(ctypes.Structure):
-            _fields_ = [
-                ("dx", ctypes.c_long),
-                ("dy", ctypes.c_long),
-                ("mouseData", ctypes.c_uint32),
-                ("dwFlags", ctypes.c_uint32),
-                ("time", ctypes.c_uint32),
-                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-            ]
-
-        class INPUT_UNION(ctypes.Union):
-            _fields_ = [("mi", MOUSEINPUT)]
-
-        class INPUT(ctypes.Structure):
-            _fields_ = [
-                ("type", ctypes.c_uint32),
-                ("union", INPUT_UNION),
-            ]
-
-        # mouseData 的高位字是 wheel_delta
-        mi = MOUSEINPUT(0, 0, wheel_delta & 0xFFFFFFFF, MOUSEEVENTF_WHEEL, 0, None)
-        inp = INPUT(INPUT_MOUSE, INPUT_UNION(mi))
-        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
-        action_wait(0.5)
-
-    def _close_popup_x(self) -> bool:
-        """关闭插屏弹窗的×按钮。
-
-        三层策略：
-          1. UIA 名称搜索 "×" "关闭" 等
-          2. OCR 定位 + ControlFromPoint
-          3. OCR 坐标点击（兜底）
-        """
-        # 策略1: UIA 名称搜索
-        if self._target_hwnd is None:
-            self._target_hwnd = self._find_target_hwnd()
-
-        if self._target_hwnd:
-            # 注意: 不搜索 "Close" — 它会匹配到窗口标题栏的系统关闭按钮
-            for kw in ["×", "关闭", "关闭广告", "跳过"]:
-                if uia.find_and_invoke(self._target_hwnd, kw):
-                    logger.info(f"  UIA 关闭弹窗: '{kw}'")
-                    action_wait(1.5)
-                    return True
-
-        # 策略2: OCR + ControlFromPoint
-        screen = self._capture()
-        if screen is None:
-            return False
-        sh, sw = screen.shape[:2]
-        top_region = (0, 0, sw, sh // 3)
-        x_result = ocr.find_text(screen, self._kw_popup_x, region=top_region)
-
-        if x_result is not None:
-            x, y, text = x_result
-            ox, oy = self._win_rect[0], self._win_rect[1]
-            screen_x = ox + x
-            screen_y = oy + y
-            logger.info(f"  OCR 关闭弹窗 '{text}' @ win({x},{y}) -> screen({screen_x},{screen_y})")
-
-            # 尝试 ControlFromPoint
-            if uia.invoke_at_point(screen_x, screen_y):
-                logger.info(f"  UIA Point 关闭弹窗成功")
-                action_wait(1.5)
-                return True
-
-            # 兜底: 坐标点击
-            logger.info(f"  ControlFromPoint 未命中，坐标点击兜底")
-            self._ensure_focus()
-            self._click_win(x, y, clicks=1)
-            action_wait(1.5)
-            return True
-
-        logger.info("  未找到×关闭按钮")
-        return False
-
     # ──────────────────────────────────────────────
     # 状态处理
     # ──────────────────────────────────────────────
@@ -586,35 +488,7 @@ class AdBotEngine:
             return
 
         user32 = ctypes.windll.user32
-        wechat_hwnd = None
-
-        # 查找微信窗口（支持新版微信 Weixin、旧版 WeChat、中文微信）
-        wechat_keywords = ["微信", "WeChat", "Weixin"]
-
-        def find_wechat():
-            nonlocal wechat_hwnd
-            found = []
-
-            def callback(hwnd, _lparam):
-                if not user32.IsWindowVisible(hwnd):
-                    return True
-                length = user32.GetWindowTextLengthW(hwnd) + 1
-                if length <= 1:
-                    return True
-                buf = ctypes.create_unicode_buffer(length)
-                user32.GetWindowTextW(hwnd, buf, length)
-                title = buf.value
-                for kw in wechat_keywords:
-                    if kw in title:
-                        found.append(hwnd)
-                        break
-                return True
-
-            enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-            user32.EnumWindows(enum_cb(callback), 0)
-            wechat_hwnd = found[0] if found else None
-
-        find_wechat()
+        wechat_hwnd = self._find_wechat_window()
 
         if wechat_hwnd:
             logger.info(f"  微信已在运行 (hwnd={wechat_hwnd})，激活窗口")
@@ -709,7 +583,7 @@ class AdBotEngine:
             # 等待微信窗口出现（最多 30 秒）
             for i in range(60):
                 action_wait(0.5)
-                find_wechat()
+                wechat_hwnd = self._find_wechat_window()
                 if wechat_hwnd:
                     logger.info(f"  微信窗口已出现 (hwnd={wechat_hwnd})")
                     user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
@@ -765,33 +639,7 @@ class AdBotEngine:
         user32 = ctypes.windll.user32
 
         # 1. 找到微信窗口
-        wechat_hwnd = None
-        wechat_keywords = ["微信", "WeChat", "Weixin"]
-
-        def find_wechat():
-            nonlocal wechat_hwnd
-            found = []
-
-            def callback(hwnd, _lparam):
-                if not user32.IsWindowVisible(hwnd):
-                    return True
-                length = user32.GetWindowTextLengthW(hwnd) + 1
-                if length <= 1:
-                    return True
-                buf = ctypes.create_unicode_buffer(length)
-                user32.GetWindowTextW(hwnd, buf, length)
-                title = buf.value
-                for kw in wechat_keywords:
-                    if kw in title:
-                        found.append(hwnd)
-                        break
-                return True
-
-            enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-            user32.EnumWindows(enum_cb(callback), 0)
-            wechat_hwnd = found[0] if found else None
-
-        find_wechat()
+        wechat_hwnd = self._find_wechat_window()
         if not wechat_hwnd:
             logger.error("  微信窗口未找到，跳过")
             self.state = State.INIT
@@ -811,7 +659,6 @@ class AdBotEngine:
 
         # 4. 输入"简幻欢"
         logger.info("  输入'简幻欢'...")
-        pyautogui.typewrite("简幻欢", interval=0.05) if False else None
         # pyautogui 不支持中文输入，用剪贴板粘贴
         import subprocess as sp
         sp.Popen(["clip"], stdin=sp.PIPE).communicate("简幻欢".encode("utf-16-le"))
@@ -829,9 +676,8 @@ class AdBotEngine:
         self._update_win_rect()
 
         # 先用 UIA 搜索
-        from core import uia as uia_mod
-        if uia_mod.exists(wechat_hwnd, "简幻欢"):
-            uia_mod.find_and_invoke(wechat_hwnd, "简幻欢")
+        if uia.exists(wechat_hwnd, "简幻欢"):
+            uia.find_and_invoke(wechat_hwnd, "简幻欢")
             logger.info("  已点击搜索结果中的'简幻欢'")
             action_wait(5.0)
             self.state = State.INIT
@@ -859,7 +705,6 @@ class AdBotEngine:
             self._update_win_rect()
             if self._win_rect[0] <= -32000:
                 logger.info("  窗口已最小化，先还原...")
-                import ctypes
                 ctypes.windll.user32.ShowWindow(wintypes.HWND(self._target_hwnd), 9)  # SW_RESTORE
                 action_wait(1.0)
             # 激活窗口后再更新 rect（激活前坐标可能不正确）

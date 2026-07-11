@@ -6,15 +6,10 @@
 import ctypes
 import logging
 import platform
-import subprocess
 import time
 from ctypes import wintypes
-from typing import Tuple
 
 logger = logging.getLogger(__name__)
-
-# 目标窗口句柄（由 set_target 设置，供 get_window_rect 使用）
-_target_hwnd: int | None = None
 
 # ── Win32 API 检测 ──
 _HAS_WIN32 = platform.system() == "Windows" and hasattr(ctypes, "windll")
@@ -166,114 +161,21 @@ def _move_with_trajectory(user32, target_x: int, target_y: int) -> None:
     user32.SetCursorPos(target_x, target_y)
 
 
-def set_target(keywords_str: str) -> None:
-    """缓存目标窗口句柄。"""
-    global _target_hwnd
-    if not _HAS_WIN32:
-        return
-    keywords = [k.strip() for k in keywords_str.split("|")] if "|" in keywords_str else [keywords_str]
-
-    for kw in keywords:
-        hwnd = _find_hwnd_by_keyword(kw)
-        if hwnd:
-            _target_hwnd = hwnd
-            logger.info(f"目标窗口: {kw} (hwnd={hwnd})")
-            return
-
-    try:
-        user32 = ctypes.windll.user32
-        fg_hwnd = user32.GetForegroundWindow()
-        if fg_hwnd:
-            buf = ctypes.create_unicode_buffer(256)
-            user32.GetWindowTextW(fg_hwnd, buf, 256)
-            fg_title = buf.value
-            for kw in keywords:
-                if kw.lower() in fg_title.lower():
-                    _target_hwnd = fg_hwnd
-                    logger.info(f"目标窗口(前台回退): '{fg_title}' (hwnd={fg_hwnd})")
-                    return
-    except Exception:
-        pass
-
-    _target_hwnd = None
-    logger.warning(f"set_target: 未找到目标窗口 (关键词: {keywords})，截图将使用全屏模式")
-
-
-def get_window_rect() -> tuple[int, int, int, int] | None:
-    """获取目标窗口的区域。"""
-    if not _HAS_WIN32 or _target_hwnd is None:
-        return None
-    try:
-        rect = wintypes.RECT()
-        ctypes.windll.user32.GetWindowRect(wintypes.HWND(_target_hwnd), ctypes.byref(rect))
-        return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
-    except Exception:
-        return None
-
-
-def scroll(x: int, y: int, clicks: int = -3) -> None:
-    """在 (x, y) 位置滚动鼠标滚轮。"""
-    import pyautogui
-    pyautogui.moveTo(x, y, duration=0.05)
-    pyautogui.scroll(clicks)
-
-
 def wait(seconds: float) -> None:
     time.sleep(seconds)
 
 
 def focus_window(title_keyword: str) -> bool:
-    """尝试激活标题包含关键词的窗口。"""
+    """尝试激活标题包含关键词的窗口（Windows 专属）。"""
     keywords = [k.strip() for k in title_keyword.split("|")] if "|" in title_keyword else [title_keyword]
 
-    system = platform.system()
     try:
         for kw in keywords:
-            if system == "Windows":
-                ok = _focus_windows(kw)
-            elif system == "Linux":
-                ok = _focus_linux(kw)
-            elif system == "Darwin":
-                ok = _focus_macos(kw)
-            else:
-                ok = False
-            if ok:
+            if _focus_windows(kw):
                 return True
     except Exception:
         pass
     return False
-
-
-def _focus_linux(keyword: str) -> bool:
-    try:
-        result = subprocess.run(
-            ["xdotool", "search", "--name", keyword],
-            capture_output=True, text=True, timeout=3,
-        )
-        window_ids = result.stdout.strip().splitlines()
-        if not window_ids or not window_ids[0]:
-            return False
-        wid = window_ids[0]
-        subprocess.run(
-            ["xdotool", "windowactivate", wid],
-            capture_output=True, timeout=3,
-        )
-        return True
-    except FileNotFoundError:
-        return False
-
-
-def _focus_macos(keyword: str) -> bool:
-    script = f'''
-    tell application "System Events"
-        set frontmost of process "{keyword}" to true
-    end tell
-    '''
-    result = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True, timeout=5,
-    )
-    return result.returncode == 0
 
 
 # ── Windows 焦点管理 ──
@@ -451,8 +353,3 @@ def is_window_in_focus(title_keyword: str) -> bool:
     except Exception:
         pass
     return False
-
-
-def get_screen_size() -> Tuple[int, int]:
-    import pyautogui
-    return pyautogui.size()

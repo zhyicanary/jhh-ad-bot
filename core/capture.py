@@ -200,10 +200,3 @@ def screenshot(region: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray
         img = sct.grab(monitor)
         arr = np.array(img)
         return arr[:, :, :3]  # BGR
-
-
-def screenshot_gray(region: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:
-    """截取屏幕并转为灰度图。"""
-    bgr = screenshot(region)
-    import cv2
-    return cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
