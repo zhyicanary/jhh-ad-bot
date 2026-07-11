@@ -250,6 +250,14 @@ class AdBotEngine:
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
 
+        # 显式声明参数和返回值类型，避免 OverflowError
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+
         user32.OpenClipboard(0)
         user32.EmptyClipboard()
 
