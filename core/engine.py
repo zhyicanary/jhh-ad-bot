@@ -708,13 +708,35 @@ class AdBotEngine:
         user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
         action_wait(2.0)
 
-        # 3. 用 Ctrl+F 打开搜索框
-        logger.info("  按 Ctrl+F 打开搜索框...")
-        import pyautogui
-        pyautogui.hotkey("ctrl", "f")
-        action_wait(2.0)
+        # 3. 用 OCR 找搜索框并点击（新版微信 Ctrl+F 不是搜索快捷键）
+        logger.info("  查找搜索框...")
+        self._target_hwnd = wechat_hwnd
+        self._update_win_rect()
 
-        # 4. 输入"简幻欢"（用 ctypes 直接设置剪贴板，避免 clip 命令编码问题）
+        import pyautogui
+        search_keywords = ["搜索", "Search", "查找"]
+        search_result = self._find_text(search_keywords)
+        if search_result:
+            x, y, text = search_result
+            logger.info(f"  找到搜索框 '{text}' @ ({x},{y})，点击")
+            self._ensure_focus()
+            self._click_win(x, y, clicks=1, wait_after=2.0)
+        else:
+            # 兜底：点击微信窗口顶部中间区域（搜索框通常在那里）
+            logger.warning("  OCR 未找到搜索框，尝试点击顶部区域")
+            self._ensure_focus()
+            # 微信窗口顶部偏中间位置
+            rect = self._win_rect
+            if rect:
+                cx = rect[0] + (rect[2] - rect[0]) // 2
+                cy = rect[1] + 40  # 顶部偏下 40 像素
+                self._click_win(cx, cy, clicks=1, wait_after=2.0)
+            else:
+                logger.error("  无法获取窗口位置")
+                self.state = State.INIT
+                return
+
+        # 4. 输入"简幻欢"（用 ctypes 直接设置剪贴板）
         logger.info("  输入'简幻欢'...")
         self._set_clipboard_text("简幻欢")
         pyautogui.hotkey("ctrl", "v")
