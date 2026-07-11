@@ -730,25 +730,18 @@ class AdBotEngine:
     def _click_enter_wechat(self, wechat_hwnd: int) -> None:
         """点击微信登录页面的"进入微信"按钮。
 
-        新版微信启动后显示登录页面，有"进入微信"按钮。
-        用 UIA 搜索按钮名称，或 OCR 定位后坐标点击。
+        微信是原生窗口，UIA Invoke 可能无效，
+        直接用 OCR 找按钮位置然后 SendInput 坐标点击。
         """
         logger.info("  查找'进入微信'按钮...")
-        # 用 UIA 搜索
-        from core import uia as uia_mod
-        keywords = ["进入微信", "Enter Weixin", "登录", "Login"]
-        for kw in keywords:
-            if uia_mod.exists(wechat_hwnd, kw):
-                uia_mod.find_and_invoke(wechat_hwnd, kw)
-                logger.info(f"  已点击'{kw}'")
-                action_wait(3.0)
-                return
-        # UIA 没找到，用 OCR + 坐标点击
         self._target_hwnd = wechat_hwnd
         self._update_win_rect()
+
+        keywords = ["进入微信", "Enter Weixin", "登录", "Login"]
+        # 直接用 OCR + 坐标点击（微信原生窗口，UIA Invoke 不可靠）
         result = self._find_and_click(keywords, wait_after=3.0)
         if result:
-            logger.info(f"  已点击'{result[2]}'（OCR 坐标点击）")
+            logger.info(f"  已点击'{result[2]}'")
         else:
             logger.warning("  未找到'进入微信'按钮，可能已自动登录")
 
