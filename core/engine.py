@@ -87,6 +87,7 @@ class AdBotEngine:
         self._watch_start: float = 0.0
         self._ad_not_found_count: int = 0
         self._target_hwnd: int | None = None
+        self._wechat_hwnd: int | None = None  # 微信主窗口 hwnd，跨状态复用
         self._win_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)  # left, top, w, h
 
         win_cfg = config.get("window", {})
@@ -523,6 +524,7 @@ class AdBotEngine:
 
         if wechat_hwnd:
             logger.info(f"  微信已在运行 (hwnd={wechat_hwnd})，激活窗口")
+            self._wechat_hwnd = wechat_hwnd
             # SW_RESTORE = 9，从最小化/托盘恢复窗口
             user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)
             action_wait(0.5)
@@ -619,6 +621,7 @@ class AdBotEngine:
                 wechat_hwnd = self._find_wechat_window()
                 if wechat_hwnd:
                     logger.info(f"  微信窗口已出现 (hwnd={wechat_hwnd})")
+                    self._wechat_hwnd = wechat_hwnd
                     # 显示并激活窗口
                     user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
                     user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
@@ -674,7 +677,7 @@ class AdBotEngine:
         """通过微信搜索框打开简幻欢小程序。
 
         流程：
-        1. 找到微信主窗口并激活
+        1. 找到微信主窗口并激活（复用 _handle_open_wechat 找到的 hwnd）
         2. 用 Ctrl+F 打开搜索框
         3. 输入"简幻欢"
         4. 等待搜索结果
@@ -689,24 +692,30 @@ class AdBotEngine:
 
         user32 = ctypes.windll.user32
 
-        # 1. 找到微信窗口（点"进入微信"后窗口可能重建，重试几次）
-        wechat_hwnd = None
-        for i in range(5):
-            wechat_hwnd = self._find_wechat_window()
-            if wechat_hwnd:
-                break
-            logger.info(f"  等待微信窗口出现... ({i+1}/5)")
-            action_wait(2.0)
-        if not wechat_hwnd:
-            logger.error("  微信窗口未找到，跳过")
-            self.state = State.INIT
-            return
+        # 1. 复用之前找到的微信窗口，避免 _find_wechat_window 因 IsWindowVisible 返回错误窗口
+        wechat_hwnd = self._wechat_hwnd
+        if wechat_hwnd is None or not user32.IsWindow(wintypes.HWND(wechat_hwnd)):
+            logger.info("  窗口句柄无效，重新搜索微信窗口...")
+            for i in range(5):
+                wechat_hwnd = self._find_wechat_window()
+                if wechat_hwnd:
+                    break
+                logger.info(f"  等待微信窗口出现... ({i+1}/5)")
+                action_wait(2.0)
+            if not wechat_hwnd:
+                logger.error("  微信窗口未找到，跳过")
+                self.state = State.INIT
+                return
+            self._wechat_hwnd = wechat_hwnd
 
-        # 2. 激活微信窗口
-        logger.info(f"  激活微信窗口 (hwnd={wechat_hwnd})")
-        user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
-        user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-        action_wait(2.0)
+        # 2. 只在窗口不在前台时才激活（避免二次激活导致焦点错乱）
+        if not is_window_in_focus("微信|WeChat|Weixin"):
+            logger.info(f"  激活微信窗口 (hwnd={wechat_hwnd})")
+            user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
+            user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
+            action_wait(2.0)
+        else:
+            logger.info(f"  微信窗口已在前台 (hwnd={wechat_hwnd})")
 
         # 3. 用 OCR 找搜索框并点击（新版微信 Ctrl+F 不是搜索快捷键）
         logger.info("  查找搜索框...")
