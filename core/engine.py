@@ -584,7 +584,9 @@ class AdBotEngine:
         user32 = ctypes.windll.user32
         wechat_hwnd = None
 
-        # 查找微信窗口
+        # 查找微信窗口（支持新版微信 Weixin、旧版 WeChat、中文微信）
+        wechat_keywords = ["微信", "WeChat", "Weixin"]
+
         def find_wechat():
             nonlocal wechat_hwnd
             found = []
@@ -598,7 +600,7 @@ class AdBotEngine:
                 buf = ctypes.create_unicode_buffer(length)
                 user32.GetWindowTextW(hwnd, buf, length)
                 title = buf.value
-                for kw in ["微信", "WeChat"]:
+                for kw in wechat_keywords:
                     if kw in title:
                         found.append(hwnd)
                         break
@@ -700,23 +702,31 @@ class AdBotEngine:
         if wechat_exe:
             logger.info(f"  启动微信: {wechat_exe}")
             subprocess.Popen([wechat_exe])
-            # 等待微信窗口出现（最多 20 秒）
-            for i in range(40):
+            # 等待微信窗口出现（最多 30 秒）
+            for i in range(60):
                 action_wait(0.5)
                 find_wechat()
                 if wechat_hwnd:
-                    logger.info(f"  微信已启动 (hwnd={wechat_hwnd})")
+                    logger.info(f"  微信窗口已出现 (hwnd={wechat_hwnd})")
                     user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-                    action_wait(2.0)
+                    # 微信刚启动可能显示登录页面，等待用户登录完成
+                    # 检测窗口标题变化（登录后标题会变成"微信"/"Weixin"+用户名）
+                    logger.info("  等待微信登录完成...")
+                    logger.info("  如果显示登录页面，请在手机上确认登录")
+                    # 等待 15 秒让用户登录
+                    action_wait(15.0)
+                    # 重新激活窗口
+                    find_wechat()
+                    if wechat_hwnd:
+                        user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
+                        action_wait(2.0)
                     self.state = State.INIT
                     return
-            logger.error("  微信启动超时（20秒未出现窗口）")
+            logger.error("  微信启动超时（30秒未出现窗口）")
             self.state = State.INIT
         else:
             logger.error("  未找到微信安装路径！")
-            logger.error("  请在 config.yaml 中配置 wechat.path，例如：")
-            logger.error('    wechat:')
-            logger.error('      path: "D:\\Tencent\\WeChat\\WeChat.exe"')
+            logger.error("  请在托盘右键菜单'配置'中设置微信路径")
             logger.error("  或手动打开微信后重新运行程序")
             self.state = State.STOP
 
