@@ -218,16 +218,17 @@ class AdBotEngine:
         """枚举窗口找到微信的 hwnd。
 
         支持新版微信 Weixin、旧版 WeChat、中文微信。
+        优先返回可见窗口；如果没有可见窗口，返回隐藏窗口（托盘场景）。
         """
         if not _HAS_WIN32:
             return None
 
         user32 = ctypes.windll.user32
         wechat_keywords = ["微信", "WeChat", "Weixin"]
-        found = []
+        visible_found = []
+        hidden_found = []
 
         def callback(hwnd, _lparam):
-            # 不检查 IsWindowVisible — 微信最小化到托盘时窗口隐藏但仍然存在
             length = user32.GetWindowTextLengthW(hwnd) + 1
             if length <= 1:
                 return True
@@ -236,13 +237,18 @@ class AdBotEngine:
             title = buf.value
             for kw in wechat_keywords:
                 if kw in title:
-                    found.append(hwnd)
+                    if user32.IsWindowVisible(hwnd):
+                        visible_found.append(hwnd)
+                    else:
+                        hidden_found.append(hwnd)
                     break
             return True
 
         enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         user32.EnumWindows(enum_cb(callback), 0)
-        return found[0] if found else None
+        # 优先返回可见窗口
+        return (visible_found[0] if visible_found
+                else (hidden_found[0] if hidden_found else None))
 
     def _set_clipboard_text(self, text: str) -> None:
         """用 Win32 API 直接设置剪贴板文本（避免 clip 命令编码问题）。"""
@@ -530,24 +536,6 @@ class AdBotEngine:
             action_wait(0.5)
             user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
             action_wait(2.0)
-            # 检测是否在登录页面（可能有"进入微信"按钮）
-            self._target_hwnd = wechat_hwnd
-            self._update_win_rect()
-            if self._has_text(["进入微信", "Enter Weixin"]):
-                logger.info("  检测到登录页面，点击'进入微信'")
-                self._click_enter_wechat(wechat_hwnd)
-                logger.info("  等待微信主界面加载...")
-                for wait_i in range(10):
-                    action_wait(1.0)
-                    self._target_hwnd = wechat_hwnd
-                    self._update_win_rect()
-                    if self._has_text(["进入微信", "Enter Weixin"]):
-                        logger.info(f"  仍在登录页面，继续等待... ({wait_i+1}/10)")
-                        continue
-                    else:
-                        logger.info("  微信主界面已加载")
-                        break
-            action_wait(1.0)
             self.state = State.OPEN_MINI_PROGRAM
             return
 
@@ -722,15 +710,12 @@ class AdBotEngine:
             self.state = State.INIT
             return
 
-        # 2. 激活微信窗口（多重确保聚焦）
+        # 2. 激活微信窗口
         logger.info(f"  激活微信窗口 (hwnd={wechat_hwnd})")
         user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
         action_wait(0.5)
         user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-        action_wait(1.0)
-        # 再激活一次，防止第一次被系统拦截
-        user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-        action_wait(1.0)
+        action_wait(2.0)
 
         # 3. 用 Ctrl+F 打开搜索框
         logger.info("  按 Ctrl+F 打开搜索框...")
