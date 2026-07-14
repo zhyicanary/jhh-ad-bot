@@ -131,52 +131,56 @@ def capture_window(hwnd: int) -> Optional[np.ndarray]:
     bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
     gdi32.SelectObject(mfc_dc, bitmap)
 
-    # PrintWindow: PW_RENDERFULLCONTENT = 2 (支持渲染完整内容)
-    result = user32.PrintWindow(wintypes.HWND(hwnd), mfc_dc, 2)
+    try:
+        # PrintWindow: PW_RENDERFULLCONTENT = 2 (支持渲染完整内容)
+        result = user32.PrintWindow(wintypes.HWND(hwnd), mfc_dc, 2)
 
-    if result != 1:
-        # 回退: PW_CLIENTONLY = 0
-        result = user32.PrintWindow(wintypes.HWND(hwnd), mfc_dc, 0)
+        if result != 1:
+            # 回退: PW_CLIENTONLY = 0
+            result = user32.PrintWindow(wintypes.HWND(hwnd), mfc_dc, 0)
 
-    if result != 1:
-        # PrintWindow 失败，回退到 BitBlt
-        gdi32.BitBlt(mfc_dc, 0, 0, width, height, hwnd_dc, 0, 0, 0x00CC0020)  # SRCCOPY
+        if result != 1:
+            # PrintWindow 失败，回退到 BitBlt
+            gdi32.BitBlt(mfc_dc, 0, 0, width, height, hwnd_dc, 0, 0, 0x00CC0020)  # SRCCOPY
 
-    # 读取位图数据
-    class BITMAPINFOHEADER(ctypes.Structure):
-        _fields_ = [
-            ("biSize", wintypes.UINT),
-            ("biWidth", wintypes.LONG),
-            ("biHeight", wintypes.LONG),
-            ("biPlanes", wintypes.WORD),
-            ("biBitCount", wintypes.WORD),
-            ("biCompression", wintypes.UINT),
-            ("biSizeImage", wintypes.UINT),
-            ("biXPelsPerMeter", wintypes.LONG),
-            ("biYPelsPerMeter", wintypes.LONG),
-            ("biClrUsed", wintypes.UINT),
-            ("biClrImportant", wintypes.UINT),
-        ]
+        # 读取位图数据
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [
+                ("biSize", wintypes.UINT),
+                ("biWidth", wintypes.LONG),
+                ("biHeight", wintypes.LONG),
+                ("biPlanes", wintypes.WORD),
+                ("biBitCount", wintypes.WORD),
+                ("biCompression", wintypes.UINT),
+                ("biSizeImage", wintypes.UINT),
+                ("biXPelsPerMeter", wintypes.LONG),
+                ("biYPelsPerMeter", wintypes.LONG),
+                ("biClrUsed", wintypes.UINT),
+                ("biClrImportant", wintypes.UINT),
+            ]
 
-    bi = BITMAPINFOHEADER()
-    bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-    bi.biWidth = width
-    bi.biHeight = -height  # 负值 = top-down
-    bi.biPlanes = 1
-    bi.biBitCount = 32
-    bi.biCompression = 0  # BI_RGB
+        bi = BITMAPINFOHEADER()
+        bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bi.biWidth = width
+        bi.biHeight = -height  # 负值 = top-down
+        bi.biPlanes = 1
+        bi.biBitCount = 32
+        bi.biCompression = 0  # BI_RGB
 
-    buf = ctypes.create_string_buffer(width * height * 4)
-    gdi32.GetDIBits(mfc_dc, bitmap, 0, height, buf, ctypes.byref(bi), 0)
+        buf = ctypes.create_string_buffer(width * height * 4)
+        gdi32.GetDIBits(mfc_dc, bitmap, 0, height, buf, ctypes.byref(bi), 0)
 
-    # 清理资源
-    gdi32.DeleteObject(bitmap)
-    gdi32.DeleteDC(mfc_dc)
-    user32.ReleaseDC(wintypes.HWND(hwnd), hwnd_dc)
-
-    # 转换为 numpy 数组
-    arr = np.frombuffer(buf.raw, dtype=np.uint8).reshape((height, width, 4))
-    return arr[:, :, :3]  # BGRA → BGR
+        # 转换为 numpy 数组
+        arr = np.frombuffer(buf.raw, dtype=np.uint8).reshape((height, width, 4))
+        return arr[:, :, :3]  # BGRA → BGR
+    except Exception as e:
+        logger.warning(f"截图失败: {e}")
+        return None
+    finally:
+        # 清理资源（确保异常时也不泄漏）
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(mfc_dc)
+        user32.ReleaseDC(wintypes.HWND(hwnd), hwnd_dc)
 
 
 def screenshot(region: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:

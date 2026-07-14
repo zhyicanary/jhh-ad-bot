@@ -13,12 +13,14 @@ _ENGINE = None
 
 
 def init() -> bool:
-    """初始化 RapidOCR 引擎。
+    """初始化 RapidOCR 引擎（幂等，重复调用安全）。
 
     Returns:
         True 表示可用。
     """
     global _RAPIDOCR_AVAILABLE, _ENGINE
+    if _RAPIDOCR_AVAILABLE and _ENGINE is not None:
+        return True
     try:
         from rapidocr_onnxruntime import RapidOCR
         _ENGINE = RapidOCR()

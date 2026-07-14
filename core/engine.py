@@ -257,24 +257,26 @@ class AdBotEngine:
         kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
         user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
 
-        user32.OpenClipboard(0)
-        user32.EmptyClipboard()
+        try:
+            user32.OpenClipboard(0)
+            user32.EmptyClipboard()
 
-        # CF_UNICODETEXT = 13
-        data = text + "\0"
-        data_bytes = data.encode("utf-16-le")
-        h_global = kernel32.GlobalAlloc(0x0042, len(data_bytes))  # GMEM_MOVEABLE | GMEM_ZEROINIT
-        if not h_global:
+            # CF_UNICODETEXT = 13
+            data = text + "\0"
+            data_bytes = data.encode("utf-16-le")
+            h_global = kernel32.GlobalAlloc(0x0042, len(data_bytes))
+            if not h_global:
+                return
+            locked = kernel32.GlobalLock(h_global)
+            if not locked:
+                return
+            ctypes.memmove(locked, data_bytes, len(data_bytes))
+            kernel32.GlobalUnlock(h_global)
+            user32.SetClipboardData(13, h_global)
+        except Exception as e:
+            logger.warning(f"  设置剪贴板失败: {e}")
+        finally:
             user32.CloseClipboard()
-            return
-        locked = kernel32.GlobalLock(h_global)
-        if not locked:
-            user32.CloseClipboard()
-            return
-        ctypes.memmove(locked, data_bytes, len(data_bytes))
-        kernel32.GlobalUnlock(h_global)
-        user32.SetClipboardData(13, h_global)  # CF_UNICODETEXT
-        user32.CloseClipboard()
 
     def _update_win_rect(self) -> None:
         """更新目标窗口的屏幕坐标。"""
@@ -527,7 +529,25 @@ class AdBotEngine:
             user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)
             action_wait(0.5)
             user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-            action_wait(3.0)
+            action_wait(2.0)
+            # 检测是否在登录页面（可能有"进入微信"按钮）
+            self._target_hwnd = wechat_hwnd
+            self._update_win_rect()
+            if self._has_text(["进入微信", "Enter Weixin"]):
+                logger.info("  检测到登录页面，点击'进入微信'")
+                self._click_enter_wechat(wechat_hwnd)
+                logger.info("  等待微信主界面加载...")
+                for wait_i in range(10):
+                    action_wait(1.0)
+                    self._target_hwnd = wechat_hwnd
+                    self._update_win_rect()
+                    if self._has_text(["进入微信", "Enter Weixin"]):
+                        logger.info(f"  仍在登录页面，继续等待... ({wait_i+1}/10)")
+                        continue
+                    else:
+                        logger.info("  微信主界面已加载")
+                        break
+            action_wait(1.0)
             self.state = State.OPEN_MINI_PROGRAM
             return
 
@@ -675,7 +695,7 @@ class AdBotEngine:
 
         流程：
         1. 找到微信主窗口并激活
-        2. 用 Ctrl+F 打开搜索框
+        2. 用 OCR 找搜索框并点击
         3. 输入"简幻欢"
         4. 等待搜索结果
         5. 点击搜索结果中的小程序
@@ -725,14 +745,14 @@ class AdBotEngine:
             # 兜底：点击微信窗口顶部中间区域（搜索框通常在那里）
             logger.warning("  OCR 未找到搜索框，尝试点击顶部区域")
             self._ensure_focus()
-            # 微信窗口顶部偏中间位置
+            # _win_rect = (left, top, width, height)
             rect = self._win_rect
-            if rect:
-                cx = rect[0] + (rect[2] - rect[0]) // 2
+            if rect and rect[2] > 0:
+                cx = rect[0] + rect[2] // 2  # left + width/2
                 cy = rect[1] + 40  # 顶部偏下 40 像素
                 self._click_win(cx, cy, clicks=1, wait_after=2.0)
             else:
-                logger.error("  无法获取窗口位置")
+                logger.error("  无法获取窗口位置，跳过搜索")
                 self.state = State.INIT
                 return
 
@@ -979,9 +999,11 @@ class AdBotEngine:
         if result is None:
             logger.info("  未找到关闭按钮，重试中...")
             action_wait(self._t_check_interval)
-        if self._has_text(self._kw_close):
-            logger.warning("  关闭按钮仍在，重试")
-            self._find_and_click(self._kw_close, wait_after=self._t_close_wait)
+            # 第二次尝试
+            result = self._find_and_click(self._kw_close, wait_after=self._t_close_wait)
+            if result is None:
+                logger.warning("  两次未找到关闭按钮，可能广告已关闭")
+                # 仍然继续，广告可能已经自动关闭了
         self.state = State.WAITING_REWARD
 
     def _handle_waiting_reward(self) -> None:

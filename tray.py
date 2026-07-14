@@ -210,8 +210,9 @@ class TrayApp:
             return
         self.is_running = True
         self.status = "running"
-        icon.icon = create_icon_image("running")
-        icon.title = "简幻欢自动化 - 运行中"
+        if icon:
+            icon.icon = create_icon_image("running")
+            icon.title = "简幻欢自动化 - 运行中"
 
         # 在新线程中运行引擎
         self.engine_thread = threading.Thread(target=self._run_engine, daemon=True)
@@ -221,7 +222,8 @@ class TrayApp:
         """只执行一轮。"""
         if self.is_running:
             return
-        self.config.setdefault("loop", {})["max_rounds"] = 1
+        # 不污染 config，直接传 once=True 给引擎
+        self._once_mode = True
         self._on_start(icon, item)
 
     def _on_stop(self, icon=None, item=None):
@@ -257,7 +259,6 @@ class TrayApp:
 
     def _on_config(self, icon=None, item=None):
         """打开配置窗口。"""
-        import threading
         thread = threading.Thread(target=self._show_config_dialog, daemon=True)
         thread.start()
 
@@ -383,6 +384,10 @@ class TrayApp:
                 return
 
             self.engine = AdBotEngine(self.config)
+            # once 模式：只跑一轮
+            if getattr(self, "_once_mode", False):
+                self.engine.config.setdefault("loop", {})["max_rounds"] = 1
+                self._once_mode = False
             logger.info("===== 自动化引擎启动 =====")
             self.engine.run()
             logger.info("===== 自动化引擎停止 =====")
@@ -428,7 +433,8 @@ class TrayApp:
             # 如果托盘失败，回退到 CLI 模式
             print(f"托盘启动失败: {e}")
             print("回退到命令行模式...")
-            self._on_start()
+            # 直接运行引擎，不传 icon（避免 None 属性访问崩溃）
+            self._run_engine()
 
 
 def main():
