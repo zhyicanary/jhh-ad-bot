@@ -695,7 +695,7 @@ class AdBotEngine:
 
         流程：
         1. 找到微信主窗口并激活
-        2. 用 OCR 找搜索框并点击
+        2. 用 Ctrl+F 打开搜索框
         3. 输入"简幻欢"
         4. 等待搜索结果
         5. 点击搜索结果中的小程序
@@ -722,39 +722,21 @@ class AdBotEngine:
             self.state = State.INIT
             return
 
-        # 2. 激活微信窗口
+        # 2. 激活微信窗口（多重确保聚焦）
         logger.info(f"  激活微信窗口 (hwnd={wechat_hwnd})")
         user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
+        action_wait(0.5)
         user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-        action_wait(2.0)
+        action_wait(1.0)
+        # 再激活一次，防止第一次被系统拦截
+        user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
+        action_wait(1.0)
 
-        # 3. 用 OCR 找搜索框并点击（新版微信 Ctrl+F 不是搜索快捷键）
-        logger.info("  查找搜索框...")
-        self._target_hwnd = wechat_hwnd
-        self._update_win_rect()
-
+        # 3. 用 Ctrl+F 打开搜索框
+        logger.info("  按 Ctrl+F 打开搜索框...")
         import pyautogui
-        search_keywords = ["搜索", "Search", "查找"]
-        search_result = self._find_text(search_keywords)
-        if search_result:
-            x, y, text = search_result
-            logger.info(f"  找到搜索框 '{text}' @ ({x},{y})，点击")
-            self._ensure_focus()
-            self._click_win(x, y, clicks=1, wait_after=2.0)
-        else:
-            # 兜底：点击微信窗口顶部中间区域（搜索框通常在那里）
-            logger.warning("  OCR 未找到搜索框，尝试点击顶部区域")
-            self._ensure_focus()
-            # _win_rect = (left, top, width, height)
-            rect = self._win_rect
-            if rect and rect[2] > 0:
-                cx = rect[0] + rect[2] // 2  # left + width/2
-                cy = rect[1] + 40  # 顶部偏下 40 像素
-                self._click_win(cx, cy, clicks=1, wait_after=2.0)
-            else:
-                logger.error("  无法获取窗口位置，跳过搜索")
-                self.state = State.INIT
-                return
+        pyautogui.hotkey("ctrl", "f")
+        action_wait(2.0)
 
         # 4. 输入"简幻欢"（用 ctypes 直接设置剪贴板）
         logger.info("  输入'简幻欢'...")
