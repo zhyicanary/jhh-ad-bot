@@ -734,23 +734,38 @@ class AdBotEngine:
         pyautogui.press("enter")
         action_wait(3.0)
 
-        # 6. 查找搜索结果中的"简幻欢"并点击
+        # 6. 查找搜索结果中的"简幻欢"并点击（第一步：搜索结果）
         logger.info("  查找搜索结果中的小程序...")
         self._target_hwnd = wechat_hwnd
         self._update_win_rect()
 
-        # 微信是原生窗口，UIA Invoke 返回成功但实际无效。
-        # 直接用 OCR 找"简幻欢"并坐标点击。
-        # OCR 精确匹配优先（先找 text=="简幻欢" 的，而非"简幻欢小程序"等）
         result = self._find_text(["简幻欢"])
         if result:
             x, y, text = result
-            logger.info(f"  OCR 找到'{text}' @ ({x},{y})，点击")
+            logger.info(f"  OCR 找到'{text}' @ ({x},{y})，点击搜索结果")
             self._ensure_focus()
-            self._click_win(x, y, clicks=1, wait_after=5.0)
-            logger.info("  已点击搜索结果中的'简幻欢'")
-            self.state = State.INIT
-            return
+            self._click_win(x, y, clicks=1, wait_after=3.0)
+
+            # 7. 第二步：点击弹窗中的"简幻欢"小程序
+            # 搜索结果点击后会弹出详情弹窗，里面有多个选项：
+            #   简幻欢-Account、简幻欢（小程序）、简幻欢-服务器开服平台等
+            # 需要点击精确匹配"简幻欢"的那一个（小程序入口）
+            logger.info("  查找弹窗中的小程序入口...")
+            self._target_hwnd = wechat_hwnd
+            self._update_win_rect()
+
+            popup_result = self._find_text(["简幻欢"])
+            if popup_result:
+                px, py, ptext = popup_result
+                logger.info(f"  弹窗找到'{ptext}' @ ({px},{py})，点击")
+                self._click_win(px, py, clicks=1, wait_after=5.0)
+                logger.info("  已点击弹窗中的'简幻欢'小程序")
+                self.state = State.INIT
+                return
+            else:
+                logger.warning("  弹窗中未找到'简幻欢'，可能已直接进入小程序")
+                self.state = State.INIT
+                return
 
         logger.warning("  搜索结果中未找到'简幻欢'，尝试回退...")
         # 按Esc关闭搜索
