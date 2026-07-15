@@ -376,7 +376,19 @@ class AdBotEngine:
             return
 
         logger.info("窗口不在前台，尝试激活...")
-        for attempt in range(5):
+        # 如果已有 hwnd，直接用 SetForegroundWindow（不依赖标题搜索）
+        if self._target_hwnd and _HAS_WIN32:
+            user32 = ctypes.windll.user32
+            user32.ShowWindow(wintypes.HWND(self._target_hwnd), 9)  # SW_RESTORE
+            action_wait(0.3)
+            user32.SetForegroundWindow(wintypes.HWND(self._target_hwnd))
+            action_wait(0.5)
+            if is_window_in_focus(self._win_keyword):
+                logger.info("窗口已回到前台")
+                return
+
+        # 兜底：按标题关键词搜索
+        for attempt in range(3):
             focus_window(self._win_keyword)
             action_wait(1.5)
             if is_window_in_focus(self._win_keyword):
@@ -732,49 +744,70 @@ class AdBotEngine:
         # 5. 等待搜索结果，按回车搜索
         logger.info("  按回车搜索...")
         pyautogui.press("enter")
-        action_wait(3.0)
+        action_wait(5.0)
 
         # 6. 查找搜索结果中的"简幻欢"并点击
         # 搜索结果分两部分：
         #   Internet search results（带🔍图标）：简幻欢、简幻欢小程序等 — 是搜索建议，不能点
         #   Recently Used Mini Programs：简幻欢（带 app 图标）— 这才是小程序入口
-        # 用 find_all_text 找所有"简幻欢"，点最后一个（Y 最大的，即最近使用的小程序）
+        # 搜索框本身也有"简幻欢"文字（刚输入的），需要排除搜索框区域（顶部约100像素）
         logger.info("  查找搜索结果中的小程序...")
         self._target_hwnd = wechat_hwnd
         self._update_win_rect()
 
-        screen = self._capture()
-        if screen is not None:
+        # 重试查找搜索结果（等待加载）
+        all_matches = []
+        for retry in range(3):
+            screen = self._capture()
+            if screen is None:
+                action_wait(2.0)
+                continue
+
             all_matches = ocr.find_all_text(screen, ["简幻欢"])
-            if all_matches:
-                # 取最后一个（Y 最大 = 屏幕最下方 = Recently Used Mini Programs 区域）
-                x, y, text = all_matches[-1]
-                logger.info(f"  点击最近使用的小程序 '{text}' @ ({x},{y})（共 {len(all_matches)} 个匹配）")
-                self._ensure_focus()
-                self._click_win(x, y, clicks=1, wait_after=3.0)
+            # 排除搜索框区域（y < 100 的是搜索输入框的文字）
+            all_matches = [m for m in all_matches if m[1] >= 100]
 
-                # 7. 第二步：点击弹窗中的"简幻欢"小程序入口
-                # 点击后弹出详情弹窗（简幻欢-Account），里面有：
-                #   简幻欢（小程序名）、小程序®、简幻欢-服务器开服平台、Last use
-                # 需要点击"简幻欢"文字进入小程序
-                logger.info("  查找弹窗中的小程序入口...")
-                self._target_hwnd = wechat_hwnd
-                self._update_win_rect()
+            if len(all_matches) >= 1:
+                break
+            logger.info(f"  搜索结果未加载完，重试... ({retry+1}/3)")
+            action_wait(2.0)
 
+        if all_matches:
+            # 取最后一个（Y 最大 = 屏幕最下方 = Recently Used Mini Programs 区域）
+            x, y, text = all_matches[-1]
+            logger.info(f"  点击最近使用的小程序 '{text}' @ ({x},{y})（共 {len(all_matches)} 个匹配）")
+            self._ensure_focus()
+            self._click_win(x, y, clicks=1, wait_after=3.0)
+
+            # 7. 第二步：点击弹窗中的"简幻欢"小程序入口
+            # 点击后弹出详情弹窗（简幻欢-Account），里面有：
+            #   简幻欢（小程序名）、小程序®、简幻欢-服务器开服平台、Last use
+            # 需要点击"简幻欢"文字进入小程序
+            logger.info("  查找弹窗中的小程序入口...")
+            self._target_hwnd = wechat_hwnd
+            self._update_win_rect()
+
+            # 弹窗也需要等待加载
+            popup_result = None
+            for retry in range(3):
                 popup_result = self._find_text(["简幻欢"])
-                if popup_result:
-                    px, py, ptext = popup_result
-                    logger.info(f"  弹窗找到 '{ptext}' @ ({px},{py})，点击")
-                    self._click_win(px, py, clicks=1, wait_after=5.0)
-                    logger.info("  已点击弹窗中的'简幻欢'小程序")
-                    self.state = State.INIT
-                    return
-                else:
-                    logger.warning("  弹窗中未找到'简幻欢'，可能已直接进入小程序")
-                    self.state = State.INIT
-                    return
+                if popup_result and popup_result[1] >= 100:
+                    break
+                action_wait(1.5)
+
+            if popup_result:
+                px, py, ptext = popup_result
+                logger.info(f"  弹窗找到 '{ptext}' @ ({px},{py})，点击")
+                self._click_win(px, py, clicks=1, wait_after=5.0)
+                logger.info("  已点击弹窗中的'简幻欢'小程序")
+                self.state = State.INIT
+                return
             else:
-                logger.warning("  搜索结果中未找到'简幻欢'")
+                logger.warning("  弹窗中未找到'简幻欢'，可能已直接进入小程序")
+                self.state = State.INIT
+                return
+        else:
+            logger.warning("  搜索结果中未找到'简幻欢'")
 
         logger.warning("  搜索结果中未找到'简幻欢'，尝试回退...")
         pyautogui.press("escape")
