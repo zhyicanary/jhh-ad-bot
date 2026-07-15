@@ -327,6 +327,26 @@ class AdBotEngine:
         self._win_rect = (0, 0, 0, 0)
         return screenshot()
 
+    def _capture_fullscreen(self):
+        """全屏截图，OCR 坐标为屏幕绝对坐标。
+
+        用于搜索结果等覆盖层场景——PrintWindow 只截主窗口，
+        截不到搜索下拉列表等独立覆盖窗口。
+        全屏截图后把 _win_rect 设为 (0,0,...)，
+        这样 _click_win 加 0 偏移，直接用屏幕坐标点击。
+        """
+        import ctypes
+        user32 = ctypes.windll.user32
+        # 获取主屏幕分辨率
+        w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+        h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+        self._win_rect = (0, 0, w, h)
+        img = screenshot()
+        if img is not None:
+            return img
+        logger.warning("全屏截图失败")
+        return None
+
     def _click_win(self, x: int, y: int, clicks: int = 1, wait_after: float = 0) -> None:
         """点击窗口相对坐标（OCR 坐标 + 窗口偏移 = 屏幕绝对坐标）。"""
         ox, oy = self._win_rect[0], self._win_rect[1]
@@ -750,22 +770,24 @@ class AdBotEngine:
         # 搜索结果分两部分：
         #   Internet search results（带🔍图标）：简幻欢、简幻欢小程序等 — 是搜索建议，不能点
         #   Recently Used Mini Programs：简幻欢（带 app 图标）— 这才是小程序入口
-        # 搜索框本身也有"简幻欢"文字（刚输入的），需要排除搜索框区域（顶部约100像素）
+        # 用全屏截图——PrintWindow 截不到搜索下拉列表（独立覆盖窗口）
         logger.info("  查找搜索结果中的小程序...")
-        self._target_hwnd = wechat_hwnd
-        self._update_win_rect()
 
         # 重试查找搜索结果（等待加载）
         all_matches = []
         for retry in range(3):
-            screen = self._capture()
+            # 全屏截图，OCR 坐标为屏幕绝对坐标
+            screen = self._capture_fullscreen()
             if screen is None:
                 action_wait(2.0)
                 continue
 
             all_matches = ocr.find_all_text(screen, ["简幻欢"])
-            # 排除搜索框区域（y < 100 的是搜索输入框的文字）
-            all_matches = [m for m in all_matches if m[1] >= 100]
+            if all_matches:
+                logger.info(f"  全屏 OCR 找到 {len(all_matches)} 个'简幻欢'")
+            # 需要至少 2 个匹配（搜索框 + 搜索结果），或 1 个不在搜索框区域的
+            # 搜索框文字在窗口顶部，全屏坐标中大约 y < 200
+            all_matches = [m for m in all_matches if m[1] >= 200]
 
             if len(all_matches) >= 1:
                 break
@@ -775,8 +797,8 @@ class AdBotEngine:
         if all_matches:
             # 取最后一个（Y 最大 = 屏幕最下方 = Recently Used Mini Programs 区域）
             x, y, text = all_matches[-1]
-            logger.info(f"  点击最近使用的小程序 '{text}' @ ({x},{y})（共 {len(all_matches)} 个匹配）")
-            self._ensure_focus()
+            logger.info(f"  点击最近使用的小程序 '{text}' @ screen({x},{y})（共 {len(all_matches)} 个匹配）")
+            # 全屏截图模式下 _win_rect=(0,0,...)，_click_win 直接用屏幕坐标
             self._click_win(x, y, clicks=1, wait_after=3.0)
 
             # 7. 第二步：点击弹窗中的"简幻欢"小程序入口
@@ -784,14 +806,16 @@ class AdBotEngine:
             #   简幻欢（小程序名）、小程序®、简幻欢-服务器开服平台、Last use
             # 需要点击"简幻欢"文字进入小程序
             logger.info("  查找弹窗中的小程序入口...")
-            self._target_hwnd = wechat_hwnd
-            self._update_win_rect()
 
-            # 弹窗也需要等待加载
+            # 弹窗也用全屏截图
             popup_result = None
             for retry in range(3):
-                popup_result = self._find_text(["简幻欢"])
-                if popup_result and popup_result[1] >= 100:
+                popup_screen = self._capture_fullscreen()
+                if popup_screen is None:
+                    action_wait(1.5)
+                    continue
+                popup_result = ocr.find_text(popup_screen, ["简幻欢"])
+                if popup_result and popup_result[1] >= 200:
                     break
                 action_wait(1.5)
 
