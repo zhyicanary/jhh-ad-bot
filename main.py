@@ -9,11 +9,11 @@
   5. 达到每日上限后自动停止
 
 用法:
-    python main.py                    # 默认配置启动（CLI 模式）
-    python main.py --tray             # 系统托盘模式
+    python main.py                    # 直接运行
     python main.py -c config.yaml     # 指定配置文件
     python main.py --once             # 只执行一轮后停止
     python main.py -v                 # 详细日志
+    python main.py --tray             # 系统托盘模式（可选）
 """
 
 import argparse
@@ -102,8 +102,17 @@ def run_as_admin():
 
 
 def run_cli(config: dict):
-    """CLI 模式运行。"""
+    """直接运行模式。"""
     from core.engine import AdBotEngine
+    from core import ocr
+
+    # 设置控制台标题
+    if os.name == "nt":
+        ctypes.windll.kernel32.SetConsoleTitleW("简幻欢自动化助手")
+
+    # 初始化 OCR
+    if not ocr.init():
+        print("警告: OCR 引擎初始化失败，部分功能可能不可用")
 
     engine = AdBotEngine(config)
     try:
@@ -111,6 +120,16 @@ def run_cli(config: dict):
     except KeyboardInterrupt:
         engine.stop()
         print("\n用户中断，正在退出...")
+    except Exception as e:
+        print(f"\n运行出错: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # 运行结束后暂停，让用户看到结果
+    print("\n" + "=" * 40)
+    print(f"运行结束。共 {engine.stats.rounds} 轮, 观看广告 {engine.stats.ads_watched} 次, 跳过 {engine.stats.ads_skipped} 次")
+    if os.name == "nt":
+        input("\n按 Enter 退出...")
 
 
 def run_tray(config: dict, config_path: str):
@@ -125,15 +144,12 @@ def main():
     parser.add_argument("-c", "--config", default="config.yaml", help="配置文件路径")
     parser.add_argument("--once", action="store_true", help="只执行一轮")
     parser.add_argument("-v", "--verbose", action="store_true", help="详细日志")
-    parser.add_argument("--tray", action="store_true", help="系统托盘模式")
-    parser.add_argument("--cli", action="store_true", help="强制命令行模式（打包后默认托盘）")
+    parser.add_argument("--tray", action="store_true", help="系统托盘模式（可选）")
     parser.add_argument("--admin", action="store_true", help="请求管理员权限")
     args = parser.parse_args()
 
-    # 打包后默认托盘模式，除非显式指定 --cli
+    # 默认直接运行，--tray 才走托盘模式
     use_tray = args.tray
-    if hasattr(sys, "frozen") and not args.cli:
-        use_tray = True
 
     # 管理员权限
     if os.name == "nt" and not is_admin():
