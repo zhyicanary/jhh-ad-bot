@@ -25,6 +25,7 @@ from . import ocr, uia
 from .action import click, focus_window, is_window_in_focus
 from .action import wait as action_wait
 from .capture import capture_window, screenshot
+from .utils import find_windows_by_title, find_windows_by_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -181,25 +182,17 @@ class AdBotEngine:
         keywords = [k.strip() for k in self._win_keyword.split("|")]
         found = None
 
-        def callback(hwnd, _lparam):
-            nonlocal found
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            length = user32.GetWindowTextLengthW(hwnd) + 1
-            if length <= 1:
-                return True
-            buf = ctypes.create_unicode_buffer(length)
-            user32.GetWindowTextW(hwnd, buf, length)
-            title = buf.value
-            for kw in keywords:
-                if kw.lower() in title.lower():
-                    if found is None or "简幻欢" in title:
-                        found = hwnd
-                    break
-            return True
-
-        enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        user32.EnumWindows(enum_cb(callback), 0)
+        # 用公共函数枚举可见窗口
+        hwnds = find_windows_by_keywords(keywords, visible_only=True)
+        if hwnds:
+            # 优先标题包含"简幻欢"的
+            for hwnd in hwnds:
+                length = user32.GetWindowTextLengthW(hwnd) + 1
+                buf = ctypes.create_unicode_buffer(length)
+                user32.GetWindowTextW(hwnd, buf, length)
+                if "简幻欢" in buf.value:
+                    return hwnd
+            found = hwnds[0]
 
         # 回退: 前台窗口
         if found is None:
@@ -223,29 +216,8 @@ class AdBotEngine:
         if not _HAS_WIN32:
             return None
 
-        user32 = ctypes.windll.user32
         wechat_keywords = ["微信", "WeChat", "Weixin"]
-        visible_found = []
-        hidden_found = []
-
-        def callback(hwnd, _lparam):
-            length = user32.GetWindowTextLengthW(hwnd) + 1
-            if length <= 1:
-                return True
-            buf = ctypes.create_unicode_buffer(length)
-            user32.GetWindowTextW(hwnd, buf, length)
-            title = buf.value
-            for kw in wechat_keywords:
-                if kw in title:
-                    if user32.IsWindowVisible(hwnd):
-                        visible_found.append(hwnd)
-                    else:
-                        hidden_found.append(hwnd)
-                    break
-            return True
-
-        enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        user32.EnumWindows(enum_cb(callback), 0)
+        visible_found, hidden_found = find_windows_by_title(wechat_keywords)
         # 优先返回可见窗口
         return (visible_found[0] if visible_found
                 else (hidden_found[0] if hidden_found else None))
@@ -335,7 +307,6 @@ class AdBotEngine:
         全屏截图后把 _win_rect 设为 (0,0,...)，
         这样 _click_win 加 0 偏移，直接用屏幕坐标点击。
         """
-        import ctypes
         user32 = ctypes.windll.user32
         # 获取主屏幕分辨率
         w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
@@ -684,7 +655,7 @@ class AdBotEngine:
             self.state = State.OPEN_MINI_PROGRAM
         else:
             logger.error("  未找到微信安装路径！")
-            logger.error("  请在托盘右键菜单'配置'中设置微信路径")
+            logger.error("  请在 config.yaml 中设置 wechat.exe_path")
             logger.error("  或手动打开微信后重新运行程序")
             self.state = State.STOP
 

@@ -7,8 +7,11 @@
 """
 
 from typing import Tuple, Optional
+import logging
 import platform
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Windows 专用
 _HAS_WIN32 = platform.system() == "Windows"
@@ -16,24 +19,10 @@ if _HAS_WIN32:
     import ctypes
     from ctypes import wintypes
 
+from .utils import enable_dpi_awareness
 
-def _enable_dpi_awareness() -> None:
-    """启用 DPI 感知。"""
-    if not _HAS_WIN32:
-        return
-    try:
-        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-    except (AttributeError, OSError):
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        except (AttributeError, OSError):
-            try:
-                ctypes.windll.user32.SetProcessDPIAware()
-            except (AttributeError, OSError):
-                pass
-
-
-_enable_dpi_awareness()
+# 启用 DPI 感知（模块加载时）
+enable_dpi_awareness()
 
 
 def _setup_argtypes():

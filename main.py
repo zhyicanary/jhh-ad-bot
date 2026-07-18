@@ -22,18 +22,7 @@ import logging
 import os
 import sys
 
-import yaml
-
-
-def resource_path(relative_path: str) -> str:
-    """获取打包后资源文件的真实路径。
-
-    PyInstaller 打包后文件解压在 sys._MEIPASS 临时目录，
-    直接使用相对路径会找不到文件，需通过此函数转换。
-    """
-    if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+from core.utils import is_admin, run_as_admin, resource_path, load_config
 
 
 def get_config_path(config_name: str = "config.yaml") -> str:
@@ -74,33 +63,6 @@ def get_config_path(config_name: str = "config.yaml") -> str:
     return external_path
 
 
-def load_config(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def is_admin() -> bool:
-    """检查是否以管理员权限运行。"""
-    if os.name != "nt":
-        return True
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except Exception:
-        return False
-
-
-def run_as_admin():
-    """以管理员权限重启程序。"""
-    if os.name != "nt" or is_admin():
-        return False
-    try:
-        params = " ".join([f'"{arg}"' for arg in sys.argv])
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
-        sys.exit(0)
-    except Exception:
-        return False
-
-
 def run_cli(config: dict):
     """直接运行模式。"""
     from core.engine import AdBotEngine
@@ -127,7 +89,7 @@ def run_cli(config: dict):
 
     # 运行结束后暂停，让用户看到结果
     print("\n" + "=" * 40)
-    print(f"运行结束。共 {engine.stats.rounds} 轮, 观看广告 {engine.stats.ads_watched} 次, 跳过 {engine.stats.ads_skipped} 次")
+    print(f"运行结束。共 {engine.stats.rounds} 轮, 观看广告 {engine.stats.ad_watched} 次, 跳过 {engine.stats.ad_skipped} 次")
     if os.name == "nt":
         input("\n按 Enter 退出...")
 

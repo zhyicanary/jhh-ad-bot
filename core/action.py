@@ -9,10 +9,15 @@ import platform
 import time
 from ctypes import wintypes
 
-logger = logging.getLogger(__name__)
+from .utils import (
+    _HAS_WIN32,
+    enable_dpi_awareness,
+    is_admin as _is_admin,
+    find_window_by_keyword as _find_hwnd_by_keyword,
+    SW_RESTORE,
+)
 
-# ── Win32 API 检测 ──
-_HAS_WIN32 = platform.system() == "Windows" and hasattr(ctypes, "windll")
+logger = logging.getLogger(__name__)
 
 # ── Win32 SendInput 鼠标点击 ──
 _SENDINPUT_READY = False
@@ -80,22 +85,8 @@ if _HAS_WIN32:
     _user32.EnumWindows.restype = wintypes.BOOL
 
 
-def _enable_dpi_awareness() -> None:
-    """启用 DPI 感知，确保 SetCursorPos 使用与截图一致的坐标系。"""
-    if not _HAS_WIN32:
-        return
-    try:
-        ctypes.windll.user32.SetProcessDpiAwarenessContext(
-            ctypes.c_void_p(-4)
-        )
-    except (AttributeError, OSError):
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        except (AttributeError, OSError):
-            try:
-                ctypes.windll.user32.SetProcessDPIAware()
-            except (AttributeError, OSError):
-                pass
+# 启用 DPI 感知（模块加载时）
+enable_dpi_awareness()
 
 
 _enable_dpi_awareness()
@@ -180,47 +171,13 @@ def focus_window(title_keyword: str) -> bool:
 
 # ── Windows 焦点管理 ──
 
-_SW_RESTORE = 9
-_SW_SHOW = 5
+_SW_MINIMIZE = 6
 _HWND_TOP = 0
 _SWP_NOMOVE = 0x0002
 _SWP_NOSIZE = 0x0001
 _SWP_SHOWWINDOW = 0x0040
 _FLASHW_ALL = 0x00000003
 _FLASHW_TIMERNOFG = 0x0000000C
-
-
-def _is_admin() -> bool:
-    if not _HAS_WIN32:
-        return False
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except Exception:
-        return False
-
-
-def _find_hwnd_by_keyword(keyword: str) -> int | None:
-    """枚举所有可见窗口，返回标题包含关键词的第一个窗口句柄。"""
-    if not _HAS_WIN32:
-        return None
-    user32 = ctypes.windll.user32
-    found = []
-
-    enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-
-    def callback(hwnd, _lparam):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd) + 1
-        buf = ctypes.create_unicode_buffer(length)
-        user32.GetWindowTextW(hwnd, buf, length)
-        title = buf.value
-        if title and keyword.lower() in title.lower():
-            found.append(hwnd)
-        return True
-
-    user32.EnumWindows(enum_cb(callback), 0)
-    return found[0] if found else None
 
 
 def _is_foreground(hwnd: int) -> bool:
@@ -274,7 +231,7 @@ def _force_foreground(hwnd: int) -> bool:
     if target_tid != current_tid:
         attached = user32.AttachThreadInput(current_tid, target_tid, True) != 0
 
-    user32.ShowWindow(hwnd_param, _SW_RESTORE)
+    user32.ShowWindow(hwnd_param, SW_RESTORE)
     user32.SetForegroundWindow(hwnd_param)
     user32.SetWindowPos(
         hwnd_param, wintypes.HWND(_HWND_TOP), 0, 0, 0, 0,
@@ -302,9 +259,9 @@ def _force_foreground(hwnd: int) -> bool:
         return True
 
     # 第 3 层：最小化再还原
-    user32.ShowWindow(hwnd_param, 6)
+    user32.ShowWindow(hwnd_param, _SW_MINIMIZE)
     time.sleep(0.1)
-    user32.ShowWindow(hwnd_param, _SW_RESTORE)
+    user32.ShowWindow(hwnd_param, SW_RESTORE)
     user32.SetForegroundWindow(hwnd_param)
 
     return _is_foreground(hwnd)
