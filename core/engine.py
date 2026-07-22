@@ -25,6 +25,7 @@ from . import ocr, uia
 from .action import click, focus_window, is_window_in_focus
 from .action import wait as action_wait
 from .capture import capture_window, screenshot
+from .utils import find_windows_by_title, find_windows_by_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,6 @@ class AdBotEngine:
         self._watch_start: float = 0.0
         self._ad_not_found_count: int = 0
         self._target_hwnd: int | None = None
-        self._wechat_hwnd: int | None = None  # 微信主窗口 hwnd，跨状态复用
         self._win_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)  # left, top, w, h
 
         win_cfg = config.get("window", {})
@@ -182,25 +182,17 @@ class AdBotEngine:
         keywords = [k.strip() for k in self._win_keyword.split("|")]
         found = None
 
-        def callback(hwnd, _lparam):
-            nonlocal found
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            length = user32.GetWindowTextLengthW(hwnd) + 1
-            if length <= 1:
-                return True
-            buf = ctypes.create_unicode_buffer(length)
-            user32.GetWindowTextW(hwnd, buf, length)
-            title = buf.value
-            for kw in keywords:
-                if kw.lower() in title.lower():
-                    if found is None or "简幻欢" in title:
-                        found = hwnd
-                    break
-            return True
-
-        enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        user32.EnumWindows(enum_cb(callback), 0)
+        # 用公共函数枚举可见窗口
+        hwnds = find_windows_by_keywords(keywords, visible_only=True)
+        if hwnds:
+            # 优先标题包含"简幻欢"的
+            for hwnd in hwnds:
+                length = user32.GetWindowTextLengthW(hwnd) + 1
+                buf = ctypes.create_unicode_buffer(length)
+                user32.GetWindowTextW(hwnd, buf, length)
+                if "简幻欢" in buf.value:
+                    return hwnd
+            found = hwnds[0]
 
         # 回退: 前台窗口
         if found is None:
@@ -219,51 +211,16 @@ class AdBotEngine:
         """枚举窗口找到微信的 hwnd。
 
         支持新版微信 Weixin、旧版 WeChat、中文微信。
+        优先返回可见窗口；如果没有可见窗口，返回隐藏窗口（托盘场景）。
         """
         if not _HAS_WIN32:
             return None
 
-        user32 = ctypes.windll.user32
         wechat_keywords = ["微信", "WeChat", "Weixin"]
-        found = []
-
-        def callback(hwnd, _lparam):
-            # 不检查 IsWindowVisible — 微信最小化到托盘时窗口隐藏但仍然存在
-            length = user32.GetWindowTextLengthW(hwnd) + 1
-            if length <= 1:
-                return True
-            buf = ctypes.create_unicode_buffer(length)
-            user32.GetWindowTextW(hwnd, buf, length)
-            title = buf.value
-            for kw in wechat_keywords:
-                if kw in title:
-                    found.append(hwnd)
-                    break
-            return True
-
-        enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        user32.EnumWindows(enum_cb(callback), 0)
-        return found[0] if found else None
-
-    def _focus_wechat(self, wechat_hwnd: int | None = None) -> None:
-        """确保微信窗口在前台。用 WeChat/Weixin 关键词，不走 _ensure_focus。
-
-        _ensure_focus 用的是 _win_keyword（简幻欢|WeChatAppEx|微信），
-        不含 "Weixin"，在新版微信（标题为 Weixin）上找不到窗口。
-        """
-        if not _HAS_WIN32:
-            return
-        user32 = ctypes.windll.user32
-        hwnd = wechat_hwnd or self._wechat_hwnd
-        if hwnd and user32.IsWindow(wintypes.HWND(hwnd)):
-            fg = user32.GetForegroundWindow()
-            if fg == hwnd:
-                return  # 已在前台
-            user32.ShowWindow(wintypes.HWND(hwnd), 9)  # SW_RESTORE
-            user32.SetForegroundWindow(wintypes.HWND(hwnd))
-        else:
-            # hwnd 无效，用 focus_window 关键词兜底
-            focus_window("微信|WeChat|Weixin")
+        visible_found, hidden_found = find_windows_by_title(wechat_keywords)
+        # 优先返回可见窗口
+        return (visible_found[0] if visible_found
+                else (hidden_found[0] if hidden_found else None))
 
     def _set_clipboard_text(self, text: str) -> None:
         """用 Win32 API 直接设置剪贴板文本（避免 clip 命令编码问题）。"""
@@ -278,24 +235,26 @@ class AdBotEngine:
         kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
         user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
 
-        user32.OpenClipboard(0)
-        user32.EmptyClipboard()
+        try:
+            user32.OpenClipboard(0)
+            user32.EmptyClipboard()
 
-        # CF_UNICODETEXT = 13
-        data = text + "\0"
-        data_bytes = data.encode("utf-16-le")
-        h_global = kernel32.GlobalAlloc(0x0042, len(data_bytes))  # GMEM_MOVEABLE | GMEM_ZEROINIT
-        if not h_global:
+            # CF_UNICODETEXT = 13
+            data = text + "\0"
+            data_bytes = data.encode("utf-16-le")
+            h_global = kernel32.GlobalAlloc(0x0042, len(data_bytes))
+            if not h_global:
+                return
+            locked = kernel32.GlobalLock(h_global)
+            if not locked:
+                return
+            ctypes.memmove(locked, data_bytes, len(data_bytes))
+            kernel32.GlobalUnlock(h_global)
+            user32.SetClipboardData(13, h_global)
+        except Exception as e:
+            logger.warning(f"  设置剪贴板失败: {e}")
+        finally:
             user32.CloseClipboard()
-            return
-        locked = kernel32.GlobalLock(h_global)
-        if not locked:
-            user32.CloseClipboard()
-            return
-        ctypes.memmove(locked, data_bytes, len(data_bytes))
-        kernel32.GlobalUnlock(h_global)
-        user32.SetClipboardData(13, h_global)  # CF_UNICODETEXT
-        user32.CloseClipboard()
 
     def _update_win_rect(self) -> None:
         """更新目标窗口的屏幕坐标。"""
@@ -339,6 +298,25 @@ class AdBotEngine:
         logger.warning("PrintWindow 失败，回退全屏截图")
         self._win_rect = (0, 0, 0, 0)
         return screenshot()
+
+    def _capture_fullscreen(self):
+        """全屏截图，OCR 坐标为屏幕绝对坐标。
+
+        用于搜索结果等覆盖层场景——PrintWindow 只截主窗口，
+        截不到搜索下拉列表等独立覆盖窗口。
+        全屏截图后把 _win_rect 设为 (0,0,...)，
+        这样 _click_win 加 0 偏移，直接用屏幕坐标点击。
+        """
+        user32 = ctypes.windll.user32
+        # 获取主屏幕分辨率
+        w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+        h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+        self._win_rect = (0, 0, w, h)
+        img = screenshot()
+        if img is not None:
+            return img
+        logger.warning("全屏截图失败")
+        return None
 
     def _click_win(self, x: int, y: int, clicks: int = 1, wait_after: float = 0) -> None:
         """点击窗口相对坐标（OCR 坐标 + 窗口偏移 = 屏幕绝对坐标）。"""
@@ -389,7 +367,19 @@ class AdBotEngine:
             return
 
         logger.info("窗口不在前台，尝试激活...")
-        for attempt in range(5):
+        # 如果已有 hwnd，直接用 SetForegroundWindow（不依赖标题搜索）
+        if self._target_hwnd and _HAS_WIN32:
+            user32 = ctypes.windll.user32
+            user32.ShowWindow(wintypes.HWND(self._target_hwnd), 9)  # SW_RESTORE
+            action_wait(0.3)
+            user32.SetForegroundWindow(wintypes.HWND(self._target_hwnd))
+            action_wait(0.5)
+            if is_window_in_focus(self._win_keyword):
+                logger.info("窗口已回到前台")
+                return
+
+        # 兜底：按标题关键词搜索
+        for attempt in range(3):
             focus_window(self._win_keyword)
             action_wait(1.5)
             if is_window_in_focus(self._win_keyword):
@@ -544,12 +534,11 @@ class AdBotEngine:
 
         if wechat_hwnd:
             logger.info(f"  微信已在运行 (hwnd={wechat_hwnd})，激活窗口")
-            self._wechat_hwnd = wechat_hwnd
             # SW_RESTORE = 9，从最小化/托盘恢复窗口
             user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)
             action_wait(0.5)
             user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
-            action_wait(3.0)
+            action_wait(2.0)
             self.state = State.OPEN_MINI_PROGRAM
             return
 
@@ -641,37 +630,32 @@ class AdBotEngine:
                 wechat_hwnd = self._find_wechat_window()
                 if wechat_hwnd:
                     logger.info(f"  微信窗口已出现 (hwnd={wechat_hwnd})")
-                    self._wechat_hwnd = wechat_hwnd
                     # 显示并激活窗口
                     user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
                     user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
                     action_wait(2.0)
                     # 尝试点"进入微信"按钮
                     self._click_enter_wechat(wechat_hwnd)
-                    # 等待微信主界面加载（自动登录后窗口内容切换需要时间）
+                    # 等待微信主界面加载（检测"进入微信"按钮消失）
                     logger.info("  等待微信主界面加载...")
-                    # 先检测"进入微信"按钮是否还在，不在了说明登录完成
-                    # 但自动登录后界面仍在初始化，至少等 5 秒确保加载完
                     for wait_i in range(10):
                         action_wait(1.0)
+                        # 重新截图检测，如果"进入微信"还在说明还在登录页
                         self._target_hwnd = wechat_hwnd
                         self._update_win_rect()
                         if self._has_text(["进入微信", "Enter Weixin"]):
                             logger.info(f"  仍在登录页面，继续等待... ({wait_i+1}/10)")
                             continue
                         else:
-                            logger.info("  登录按钮已消失")
+                            logger.info("  微信主界面已加载")
                             break
-                    # 无论是否检测到按钮消失，额外等待确保主界面完整加载
-                    logger.info("  等待界面初始化完成...")
-                    action_wait(5.0)
                     self.state = State.OPEN_MINI_PROGRAM
                     return
             logger.error("  微信启动超时（30秒未出现窗口）")
             self.state = State.OPEN_MINI_PROGRAM
         else:
             logger.error("  未找到微信安装路径！")
-            logger.error("  请在托盘右键菜单'配置'中设置微信路径")
+            logger.error("  请在 config.yaml 中设置 wechat.exe_path")
             logger.error("  或手动打开微信后重新运行程序")
             self.state = State.STOP
 
@@ -691,8 +675,7 @@ class AdBotEngine:
         result = self._find_text(keywords)
         if result:
             x, y, text = result
-            # 直接设微信窗口到前台（不用 _ensure_focus，它的关键词不含 Weixin）
-            self._focus_wechat(wechat_hwnd)
+            self._ensure_focus()
             self._click_win(x, y, clicks=1, wait_after=1.0)
             logger.info(f"  已点击'{text}'")
         else:
@@ -702,7 +685,7 @@ class AdBotEngine:
         """通过微信搜索框打开简幻欢小程序。
 
         流程：
-        1. 找到微信主窗口并激活（复用 _handle_open_wechat 找到的 hwnd）
+        1. 找到微信主窗口并激活
         2. 用 Ctrl+F 打开搜索框
         3. 输入"简幻欢"
         4. 等待搜索结果
@@ -717,45 +700,29 @@ class AdBotEngine:
 
         user32 = ctypes.windll.user32
 
-        # 1. 复用之前找到的微信窗口，避免 _find_wechat_window 因 IsWindowVisible 返回错误窗口
-        wechat_hwnd = self._wechat_hwnd
-        if wechat_hwnd is None or not user32.IsWindow(wintypes.HWND(wechat_hwnd)):
-            logger.info("  窗口句柄无效，重新搜索微信窗口...")
-            for i in range(5):
-                wechat_hwnd = self._find_wechat_window()
-                if wechat_hwnd:
-                    break
-                logger.info(f"  等待微信窗口出现... ({i+1}/5)")
-                action_wait(2.0)
-            if not wechat_hwnd:
-                logger.error("  微信窗口未找到，跳过")
-                self.state = State.INIT
-                return
-            self._wechat_hwnd = wechat_hwnd
-
-        # 2. 只在窗口不在前台时才激活（避免二次激活导致焦点错乱）
-        if not is_window_in_focus("微信|WeChat|Weixin"):
-            logger.info(f"  激活微信窗口 (hwnd={wechat_hwnd})")
-            user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
-            user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
+        # 1. 找到微信窗口（点"进入微信"后窗口可能重建，重试几次）
+        wechat_hwnd = None
+        for i in range(5):
+            wechat_hwnd = self._find_wechat_window()
+            if wechat_hwnd:
+                break
+            logger.info(f"  等待微信窗口出现... ({i+1}/5)")
             action_wait(2.0)
-        else:
-            logger.info(f"  微信窗口已在前台 (hwnd={wechat_hwnd})")
+        if not wechat_hwnd:
+            logger.error("  微信窗口未找到，跳过")
+            self.state = State.INIT
+            return
 
-        # 3. 确保微信前台，按 Esc 回到主界面，再 Ctrl+F
-        # （SetForegroundWindow 只拉窗口到前面，键盘焦点可能还在聊天框里，
-        #   聊天框里 Ctrl+F 不是全局搜索，所以先 Esc 退出聊天）
-        self._focus_wechat(wechat_hwnd)
-        action_wait(0.3)
-
-        logger.info("  按 Esc 回到微信主界面...")
-        import pyautogui
-        pyautogui.press("escape")
+        # 2. 激活微信窗口
+        logger.info(f"  激活微信窗口 (hwnd={wechat_hwnd})")
+        user32.ShowWindow(wintypes.HWND(wechat_hwnd), 9)  # SW_RESTORE
         action_wait(0.5)
-        pyautogui.press("escape")
-        action_wait(0.3)
+        user32.SetForegroundWindow(wintypes.HWND(wechat_hwnd))
+        action_wait(2.0)
 
-        logger.info("  Ctrl+F 打开搜索框...")
+        # 3. 用 Ctrl+F 打开搜索框
+        logger.info("  按 Ctrl+F 打开搜索框...")
+        import pyautogui
         pyautogui.hotkey("ctrl", "f")
         action_wait(2.0)
 
@@ -768,28 +735,76 @@ class AdBotEngine:
         # 5. 等待搜索结果，按回车搜索
         logger.info("  按回车搜索...")
         pyautogui.press("enter")
-        action_wait(3.0)
+        action_wait(5.0)
 
         # 6. 查找搜索结果中的"简幻欢"并点击
+        # 搜索结果分两部分：
+        #   Internet search results（带🔍图标）：简幻欢、简幻欢小程序等 — 是搜索建议，不能点
+        #   Recently Used Mini Programs：简幻欢（带 app 图标）— 这才是小程序入口
+        # 用全屏截图——PrintWindow 截不到搜索下拉列表（独立覆盖窗口）
         logger.info("  查找搜索结果中的小程序...")
-        self._target_hwnd = wechat_hwnd
-        self._update_win_rect()
 
-        # 微信是原生窗口，UIA Invoke 返回成功但实际无效。
-        # 直接用 OCR 找"简幻欢"并坐标点击。
-        # OCR 精确匹配优先（先找 text=="简幻欢" 的，而非"简幻欢小程序"等）
-        result = self._find_text(["简幻欢"])
-        if result:
-            x, y, text = result
-            logger.info(f"  OCR 找到'{text}' @ ({x},{y})，点击")
-            self._focus_wechat(wechat_hwnd)
-            self._click_win(x, y, clicks=1, wait_after=5.0)
-            logger.info("  已点击搜索结果中的'简幻欢'")
-            self.state = State.INIT
-            return
+        # 重试查找搜索结果（等待加载）
+        all_matches = []
+        for retry in range(3):
+            # 全屏截图，OCR 坐标为屏幕绝对坐标
+            screen = self._capture_fullscreen()
+            if screen is None:
+                action_wait(2.0)
+                continue
+
+            all_matches = ocr.find_all_text(screen, ["简幻欢"])
+            if all_matches:
+                logger.info(f"  全屏 OCR 找到 {len(all_matches)} 个'简幻欢'")
+            # 需要至少 2 个匹配（搜索框 + 搜索结果），或 1 个不在搜索框区域的
+            # 搜索框文字在窗口顶部，全屏坐标中大约 y < 200
+            all_matches = [m for m in all_matches if m[1] >= 200]
+
+            if len(all_matches) >= 1:
+                break
+            logger.info(f"  搜索结果未加载完，重试... ({retry+1}/3)")
+            action_wait(2.0)
+
+        if all_matches:
+            # 取最后一个（Y 最大 = 屏幕最下方 = Recently Used Mini Programs 区域）
+            x, y, text = all_matches[-1]
+            logger.info(f"  点击最近使用的小程序 '{text}' @ screen({x},{y})（共 {len(all_matches)} 个匹配）")
+            # 全屏截图模式下 _win_rect=(0,0,...)，_click_win 直接用屏幕坐标
+            self._click_win(x, y, clicks=1, wait_after=3.0)
+
+            # 7. 第二步：点击弹窗中的"简幻欢"小程序入口
+            # 点击后弹出详情弹窗（简幻欢-Account），里面有：
+            #   简幻欢（小程序名）、小程序®、简幻欢-服务器开服平台、Last use
+            # 需要点击"简幻欢"文字进入小程序
+            logger.info("  查找弹窗中的小程序入口...")
+
+            # 弹窗也用全屏截图
+            popup_result = None
+            for retry in range(3):
+                popup_screen = self._capture_fullscreen()
+                if popup_screen is None:
+                    action_wait(1.5)
+                    continue
+                popup_result = ocr.find_text(popup_screen, ["简幻欢"])
+                if popup_result and popup_result[1] >= 200:
+                    break
+                action_wait(1.5)
+
+            if popup_result:
+                px, py, ptext = popup_result
+                logger.info(f"  弹窗找到 '{ptext}' @ ({px},{py})，点击")
+                self._click_win(px, py, clicks=1, wait_after=5.0)
+                logger.info("  已点击弹窗中的'简幻欢'小程序")
+                self.state = State.INIT
+                return
+            else:
+                logger.warning("  弹窗中未找到'简幻欢'，可能已直接进入小程序")
+                self.state = State.INIT
+                return
+        else:
+            logger.warning("  搜索结果中未找到'简幻欢'")
 
         logger.warning("  搜索结果中未找到'简幻欢'，尝试回退...")
-        # 按Esc关闭搜索
         pyautogui.press("escape")
         action_wait(1.0)
         self.state = State.INIT
@@ -1002,9 +1017,11 @@ class AdBotEngine:
         if result is None:
             logger.info("  未找到关闭按钮，重试中...")
             action_wait(self._t_check_interval)
-        if self._has_text(self._kw_close):
-            logger.warning("  关闭按钮仍在，重试")
-            self._find_and_click(self._kw_close, wait_after=self._t_close_wait)
+            # 第二次尝试
+            result = self._find_and_click(self._kw_close, wait_after=self._t_close_wait)
+            if result is None:
+                logger.warning("  两次未找到关闭按钮，可能广告已关闭")
+                # 仍然继续，广告可能已经自动关闭了
         self.state = State.WAITING_REWARD
 
     def _handle_waiting_reward(self) -> None:

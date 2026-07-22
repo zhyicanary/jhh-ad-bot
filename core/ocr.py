@@ -13,12 +13,14 @@ _ENGINE = None
 
 
 def init() -> bool:
-    """初始化 RapidOCR 引擎。
+    """初始化 RapidOCR 引擎（幂等，重复调用安全）。
 
     Returns:
         True 表示可用。
     """
     global _RAPIDOCR_AVAILABLE, _ENGINE
+    if _RAPIDOCR_AVAILABLE and _ENGINE is not None:
+        return True
     try:
         from rapidocr_onnxruntime import RapidOCR
         _ENGINE = RapidOCR()
@@ -52,8 +54,6 @@ def _parse_result(result):
         pass
 
     # 方式2: tuple 格式
-    # result[0] = [[[[x1,y1],[x2,y2],[x3,y3],[x4,y4]], 'text', score], ...]
-    # result[1] = [elapse_total, elapse_det, ...]
     if isinstance(result, tuple) and len(result) >= 1:
         raw_list = result[0]
         if raw_list is None:
@@ -62,10 +62,9 @@ def _parse_result(result):
         boxes = []
         txts = []
         for item in raw_list:
-            # item = [[[x1,y1],...], 'text', score]
             if len(item) >= 2:
-                boxes.append(item[0])  # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-                txts.append(item[1])   # 'text'
+                boxes.append(item[0])
+                txts.append(item[1])
         return boxes, txts
 
     return [], []
@@ -143,3 +142,65 @@ def find_text(
                 return (cx, cy, target)
 
     return None
+
+
+def find_all_text(
+    screen_bgr,
+    targets: list[str],
+    region: tuple[int, int, int, int] | None = None,
+) -> list[tuple[int, int, str]]:
+    """在截图中查找所有匹配的文字位置，按 Y 坐标升序排列（从上到下）。"""
+    global _ENGINE
+    if not _RAPIDOCR_AVAILABLE or _ENGINE is None:
+        return []
+
+    region_ox = 0
+    region_oy = 0
+    img = screen_bgr
+    if region is not None:
+        left, top, w, h = region
+        img = screen_bgr[top : top + h, left : left + w]
+        region_ox = left
+        region_oy = top
+
+    try:
+        result = _ENGINE(img)
+    except Exception as e:
+        logger.debug(f"RapidOCR 识别异常: {e}")
+        return []
+
+    boxes, txts = _parse_result(result)
+    if not boxes or not txts:
+        return []
+
+    matches = []
+    # 精确匹配
+    for box, text in zip(boxes, txts):
+        if not text or not isinstance(text, str):
+            continue
+        for target in targets:
+            if text.strip() == target:
+                x1, y1 = box[0]
+                x3, y3 = box[2]
+                cx = int((x1 + x3) / 2) + region_ox
+                cy = int((y1 + y3) / 2) + region_oy
+                matches.append((cx, cy, target))
+                break
+    # 子串匹配（仅在无精确匹配时）
+    if not matches:
+        for box, text in zip(boxes, txts):
+            if not text or not isinstance(text, str):
+                continue
+            for target in targets:
+                if target in text:
+                    x1, y1 = box[0]
+                    x3, y3 = box[2]
+                    cx = int((x1 + x3) / 2) + region_ox
+                    cy = int((y1 + y3) / 2) + region_oy
+                    matches.append((cx, cy, target))
+                    break
+
+    matches.sort(key=lambda m: m[1])
+    if matches:
+        logger.info(f"OCR 找到 {len(matches)} 个匹配: {[(m[2], m[1]) for m in matches]}")
+    return matches

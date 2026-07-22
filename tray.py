@@ -28,38 +28,9 @@ logger = logging.getLogger(__name__)
 # Windows API
 _HAS_WIN32 = hasattr(ctypes, "windll")
 
-# 自提权
-def _is_admin() -> bool:
-    if not _HAS_WIN32:
-        return False
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except Exception:
-        return False
-
-
-def _run_as_admin():
-    """以管理员权限重启程序。"""
-    if not _HAS_WIN32 or _is_admin():
-        return False
-    try:
-        params = " ".join([f'"{arg}"' for arg in sys.argv])
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
-        sys.exit(0)
-    except Exception:
-        return False
-
-
-def resource_path(relative_path: str) -> str:
-    """获取打包后资源文件的真实路径。"""
-    if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
-
-
-def load_config(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+from core.utils import is_admin as _is_admin, run_as_admin as _run_as_admin
+from core.utils import resource_path, load_config
+from core.utils import find_window_by_keyword
 
 
 def open_wechat() -> bool:
@@ -67,30 +38,11 @@ def open_wechat() -> bool:
     if not _HAS_WIN32:
         return False
     user32 = ctypes.windll.user32
-    from ctypes import wintypes
 
-    # 先检查微信是否已经在运行
-    keywords = ["微信", "WeChat"]
-    found_hwnd = None
-
-    def callback(hwnd, _lparam):
-        nonlocal found_hwnd
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd) + 1
-        if length <= 1:
-            return True
-        buf = ctypes.create_unicode_buffer(length)
-        user32.GetWindowTextW(hwnd, buf, length)
-        title = buf.value
-        for kw in keywords:
-            if kw in title:
-                found_hwnd = hwnd
-                return False  # 找到了就停止
-        return True
-
-    enum_cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    user32.EnumWindows(enum_cb(callback), 0)
+    # 先检查微信是否已经在运行（用公共函数）
+    found_hwnd = find_window_by_keyword("微信", visible_only=True)
+    if not found_hwnd:
+        found_hwnd = find_window_by_keyword("WeChat", visible_only=True)
 
     if found_hwnd:
         # 微信已运行，激活它
@@ -210,8 +162,9 @@ class TrayApp:
             return
         self.is_running = True
         self.status = "running"
-        icon.icon = create_icon_image("running")
-        icon.title = "简幻欢自动化 - 运行中"
+        if icon:
+            icon.icon = create_icon_image("running")
+            icon.title = "简幻欢自动化 - 运行中"
 
         # 在新线程中运行引擎
         self.engine_thread = threading.Thread(target=self._run_engine, daemon=True)
@@ -221,7 +174,8 @@ class TrayApp:
         """只执行一轮。"""
         if self.is_running:
             return
-        self.config.setdefault("loop", {})["max_rounds"] = 1
+        # 不污染 config，直接传 once=True 给引擎
+        self._once_mode = True
         self._on_start(icon, item)
 
     def _on_stop(self, icon=None, item=None):
@@ -257,7 +211,6 @@ class TrayApp:
 
     def _on_config(self, icon=None, item=None):
         """打开配置窗口。"""
-        import threading
         thread = threading.Thread(target=self._show_config_dialog, daemon=True)
         thread.start()
 
@@ -383,6 +336,10 @@ class TrayApp:
                 return
 
             self.engine = AdBotEngine(self.config)
+            # once 模式：只跑一轮
+            if getattr(self, "_once_mode", False):
+                self.engine.config.setdefault("loop", {})["max_rounds"] = 1
+                self._once_mode = False
             logger.info("===== 自动化引擎启动 =====")
             self.engine.run()
             logger.info("===== 自动化引擎停止 =====")
@@ -428,7 +385,8 @@ class TrayApp:
             # 如果托盘失败，回退到 CLI 模式
             print(f"托盘启动失败: {e}")
             print("回退到命令行模式...")
-            self._on_start()
+            # 直接运行引擎，不传 icon（避免 None 属性访问崩溃）
+            self._run_engine()
 
 
 def main():

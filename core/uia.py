@@ -285,11 +285,11 @@ def invoke_at_point(screen_x: int, screen_y: int) -> bool:
             pass
         if ctype == "TextControl":
             if _try_legacy_safe(a):
-                logger.info(f"UIA Point Legacy(safe): '{a.Name}' ({ctype})")
+                logger.info(f"UIA Point Legacy(safe): '{_safe_name(a)}' ({ctype})")
                 return True
         else:
             if _try_legacy(a):
-                logger.info(f"UIA Point Legacy: '{a.Name}' ({ctype})")
+                logger.info(f"UIA Point Legacy: '{_safe_name(a)}' ({ctype})")
                 return True
 
     logger.info(f"UIA Point: ({screen_x},{screen_y}) 向上 {len(ancestors)} 层均无可调用元素")
